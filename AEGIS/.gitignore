@@ -1,0 +1,14 @@
+node_modules/
+
+# Vite cache
+.vite/
+app/dist/
+
+# Runtime-generated log files (written by Python engines)
+sensor_log.json
+fusion_log.json
+anomaly_log.json
+ehs_log.json
+
+# Secrets
+app/.env.local
