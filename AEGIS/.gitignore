@@ -9,6 +9,7 @@ sensor_log.json
 fusion_log.json
 anomaly_log.json
 ehs_log.json
+detection_state.json
 
 # Secrets
 app/.env.local

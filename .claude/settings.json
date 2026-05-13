@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "PowerShell(cd \"c:\\\\Users\\\\admin\\\\OneDrive\\\\Apps\\\\Codes\\\\verde\\\\AEGIS\"; Get-ChildItem -Recurse | Where-Object {$_.Extension -in \".pt\",\".tflite\",\".csv\"} | Select-Object Name, @{N='MB';E={[math]::Round\\($_.Length/1MB,1\\)}} | Sort-Object MB -Descending)"
     ]
   }
 }

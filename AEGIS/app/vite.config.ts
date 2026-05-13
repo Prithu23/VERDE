@@ -52,8 +52,59 @@ function notifyPlugin(apiKey: string) {
   }
 }
 
+function locationProxy() {
+  return {
+    name: 'location-proxy',
+    configureServer(server: any) {
+      // /api/location  →  ipinfo.io (city-level IP fallback)
+      server.middlewares.use('/api/location', async (_req: any, res: any) => {
+        try {
+          const r    = await fetch('https://ipinfo.io/json')
+          const data = await r.json()
+          const [lat, lon] = (data.loc ?? '0,0').split(',').map(Number)
+          res.setHeader('Content-Type', 'application/json')
+          res.setHeader('Cache-Control', 'no-store')
+          res.end(JSON.stringify({
+            lat, lon,
+            city:     data.city    ?? '',
+            region:   data.region  ?? '',
+            country:  data.country ?? '',
+            accuracy: 1500,
+            source:   'ip',
+          }))
+        } catch (e) {
+          res.statusCode = 502
+          res.end(JSON.stringify({ error: String(e) }))
+        }
+      })
+
+      // /api/address?lat=X&lon=Y  →  Nominatim reverse geocoding (street-level)
+      server.middlewares.use('/api/address', async (req: any, res: any) => {
+        try {
+          const qs  = req.url.includes('?') ? req.url.split('?')[1] : ''
+          const p   = new URLSearchParams(qs)
+          const lat = p.get('lat')
+          const lon = p.get('lon')
+          if (!lat || !lon) { res.statusCode = 400; res.end('{}'); return }
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=18&addressdetails=1`,
+            { headers: { 'User-Agent': 'VERDE-Emergency-Dashboard/1.0' } }
+          )
+          const data = await r.json()
+          res.setHeader('Content-Type', 'application/json')
+          res.setHeader('Cache-Control', 'no-store')
+          res.end(JSON.stringify(data))
+        } catch (e) {
+          res.statusCode = 502
+          res.end(JSON.stringify({ error: String(e) }))
+        }
+      })
+    },
+  }
+}
+
 function serveParentData() {
-  const dataFiles = ['mission_log.json', 'audio_log.json', 'anomaly_log.json', 'sensor_log.json', 'ehs_log.json', 'fusion_log.json']
+  const dataFiles = ['mission_log.json', 'audio_log.json', 'anomaly_log.json', 'sensor_log.json', 'ehs_log.json', 'fusion_log.json', 'detection_state.json']
   return {
     name: 'serve-parent-data',
     configureServer(server: any) {
@@ -90,6 +141,7 @@ export default defineConfig(({ mode }) => {
   return defineConfig({
   plugins: [
     figmaAssetResolver(),
+    locationProxy(),
     serveParentData(),
     notifyPlugin(env.FAST2SMS_API_KEY || ''),
     // The React and Tailwind plugins are both required for Make, even if
