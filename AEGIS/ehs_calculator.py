@@ -71,9 +71,11 @@ def climate_subscore(sensor_readings: list) -> tuple[float, dict]:
     penalties["humidity"] = round(p, 2)
     score -= p
 
-    # MQ2 flammable gas (safe < 15 %)
+    # MQ2 flammable gas (safe < 15 %) — CRITICAL at >= 40
     mq2 = r.get("mq2", 12.0)
-    if mq2 > 15:
+    if mq2 >= 40:
+        p = 40.0   # catastrophic penalty
+    elif mq2 > 15:
         p = min((mq2 - 15) * 2.0, 40.0)
     else:
         p = 0.0
@@ -89,14 +91,32 @@ def climate_subscore(sensor_readings: list) -> tuple[float, dict]:
     penalties["mq4"] = round(p, 2)
     score -= p
 
-    # Air toxicity (safe < 20 %)
-    tox = r.get("air_toxicity", 15.0)
+    # MQ135 SO2 / air toxicity (safe < 20 %) — prefers mq135, falls back to air_toxicity
+    tox = r.get("mq135", r.get("air_toxicity", 15.0))
     if tox > 20:
         p = min((tox - 20) * 1.2, 35.0)
     else:
         p = 0.0
-    penalties["air_toxicity"] = round(p, 2)
+    penalties["mq135"] = round(p, 2)
     score -= p
+
+    # Water intrusion (flat 20-point penalty when detected)
+    if r.get("water_detected", False):
+        p = 20.0
+        penalties["water"] = p
+        score -= p
+
+    # Structural tilt from MPU gyro (safe < 5°)
+    tilt = max(abs(r.get("roll", 0.0)), abs(r.get("pitch", 0.0)))
+    if tilt > 30:
+        p = min((tilt - 30) * 1.5, 25.0)
+    elif tilt > 15:
+        p = min((tilt - 15) * 0.8, 12.0)
+    else:
+        p = 0.0
+    if p > 0:
+        penalties["tilt"] = round(p, 2)
+        score -= p
 
     return _clamp(score), penalties
 

@@ -5,11 +5,11 @@ Detects slow creeps, statistical outliers, trend shifts, event bursts, and
 correlated multi-sensor anomalies — things static thresholds will miss.
 
 Run (simulation):  python anomaly_detector.py --mode sim
-Run (real HW):     python anomaly_detector.py --mode real --port COM3
-                   python anomaly_detector.py --mode real --port /dev/ttyUSB0
+Run (real HW):     python anomaly_detector.py --mode http
+                   python anomaly_detector.py --mode real --port COM3
 
-To swap in real sensors: implement RealSensorInput.read()
-Everything else (detection, logging, frontend) stays unchanged.
+To swap in real sensors: use HttpSensorInput (polls 10.161.238.74) or
+implement RealSensorInput.read() for serial hardware.
 """
 
 import json
@@ -17,13 +17,19 @@ import math
 import time
 import random
 import argparse
+import urllib.request
 from datetime import datetime
 from collections import deque
+from pathlib import Path
 
 
 # =============================================================================
 # SENSOR INTERFACE  — swap SimulatedSensorInput for RealSensorInput in prod
 # =============================================================================
+
+SENSOR_IP = "10.161.238.74"
+SENSOR_ENDPOINTS = ["/data", "/sensor", "/sensors", "/all", "/"]
+
 
 class SensorInput:
     """Abstract base. Subclass and implement read() for real hardware."""
@@ -57,7 +63,16 @@ class SimulatedSensorInput(SensorInput):
         pressure=1013.0,
         mq2=12.0,
         mq4=8.0,
+        mq135=15.0,
         air_toxicity=15.0,
+        water_detected=False,
+        roll=0.0,
+        pitch=0.0,
+        yaw=0.0,
+        gps_valid=True,
+        gps_satellites=7,
+        lat=12.971599,
+        lon=77.594563,
         people_detected=0,
         event_rate=0.5,
     )
@@ -90,9 +105,15 @@ class SimulatedSensorInput(SensorInput):
         pressure = B["pressure"]     + self._n(0.4)
         mq2      = B["mq2"]          + self._n(0.8)
         mq4      = B["mq4"]          + self._n(0.6)
-        toxicity = B["air_toxicity"] + self._n(0.5)
+        toxicity = B["mq135"]        + self._n(0.5)
         people   = max(0, round(self._n(0.3)))
         evt_rate = max(0.0, B["event_rate"] + self._n(0.1))
+        roll     = self._n(0.5)
+        pitch    = self._n(0.5)
+        water    = False
+        # Simulate slow rover drift in GPS position
+        lat = B["lat"] + self._t * 0.000002
+        lon = B["lon"] + self._t * 0.000003
 
         if scenario == "temperature_creep":
             temp     += p * 8.0  + self._n(0.2)
@@ -109,6 +130,9 @@ class SimulatedSensorInput(SensorInput):
             if p > 0.3:
                 evt_rate = 5.5   + self._n(0.5)
                 people   = random.randint(2, 5)
+                water    = random.random() > 0.7
+                roll     = self._n(3.0)
+                pitch    = self._n(3.0)
         elif scenario == "multi_sensor_drift":
             drift     = math.sin(p * math.pi) * 12
             temp     += drift * 0.4  + self._n(0.2)
@@ -117,12 +141,21 @@ class SimulatedSensorInput(SensorInput):
 
         return {
             "timestamp":        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "temperature":      round(max(0.0, temp),          2),
-            "humidity":         round(max(0.0, min(100, humidity)), 2),
-            "pressure":         round(pressure,                2),
-            "mq2":              round(max(0.0, mq2),           2),
-            "mq4":              round(max(0.0, mq4),           2),
-            "air_toxicity":     round(max(0.0, min(100, toxicity)), 2),
+            "temperature":      round(max(0.0, temp),               2),
+            "humidity":         round(max(0.0, min(100, humidity)),  2),
+            "pressure":         round(pressure,                      2),
+            "lat":              round(lat, 6),
+            "lon":              round(lon, 6),
+            "gps_valid":        True,
+            "gps_satellites":   random.randint(6, 10),
+            "roll":             round(roll,  2),
+            "pitch":            round(pitch, 2),
+            "yaw":              round(self._n(1.0), 2),
+            "water_detected":   water,
+            "mq2":              round(max(0.0, mq2),                 2),
+            "mq4":              round(max(0.0, mq4),                 2),
+            "mq135":            round(max(0.0, min(100, toxicity)),  2),
+            "air_toxicity":     round(max(0.0, min(100, toxicity)),  2),
             "people_detected":  int(people),
             "event_rate":       round(evt_rate, 3),
             "_scenario":        scenario,
@@ -130,30 +163,134 @@ class SimulatedSensorInput(SensorInput):
 
 
 # ---------------------------------------------------------------------------
-# REAL HARDWARE STUB
+# HTTP SENSOR INPUT  — polls the ESP32 board at 10.161.238.74
+# ---------------------------------------------------------------------------
+
+class HttpSensorInput(SensorInput):
+    """Polls all sensors from the board via HTTP JSON endpoint."""
+
+    _ENDPOINTS = ["/data", "/sensor", "/sensors", "/all", "/"]
+
+    def __init__(self, ip: str = SENSOR_IP, timeout: float = 4.0):
+        self._ip      = ip
+        self._timeout = timeout
+        self._prev_people:     int   = 0
+        self._prev_event_rate: float = 0.5
+        print(f"  [HttpSensorInput] target: http://{ip}")
+
+    def _fetch_raw(self) -> dict | None:
+        for ep in self._ENDPOINTS:
+            try:
+                with urllib.request.urlopen(
+                    f"http://{self._ip}{ep}", timeout=self._timeout
+                ) as r:
+                    data = json.loads(r.read().decode())
+                    if isinstance(data, dict):
+                        return data
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _f(d: dict, *keys, default: float = 0.0) -> float:
+        for k in keys:
+            v = d.get(k)
+            if v is not None:
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    pass
+        return default
+
+    @staticmethod
+    def _b(d: dict, *keys) -> bool:
+        for k in keys:
+            v = d.get(k)
+            if v is not None:
+                if isinstance(v, bool):
+                    return v
+                try:
+                    return int(v) != 0
+                except (ValueError, TypeError):
+                    return str(v).lower() not in ('0', 'false', 'no', 'none')
+        return False
+
+    def _gps_valid(self, d: dict, lat: float, lon: float) -> bool:
+        for key in ("gpsFix", "gps_fix", "gps_valid", "fix", "gps_lock"):
+            v = d.get(key)
+            if v is not None:
+                try:
+                    return bool(int(v))
+                except (ValueError, TypeError):
+                    return bool(v)
+        return abs(lat) > 0.001 and abs(lon) > 0.001
+
+    def _tilt(self, d: dict) -> tuple:
+        import math as _m
+        roll  = self._f(d, "roll",  "Roll",  "rollAngle")
+        pitch = self._f(d, "pitch", "Pitch", "pitchAngle")
+        yaw   = self._f(d, "yaw",   "Yaw",   "yawAngle", "heading")
+        if roll == 0.0 and pitch == 0.0:
+            ax = self._f(d, "accelX", "ax", "AccX")
+            ay = self._f(d, "accelY", "ay", "AccY")
+            az = self._f(d, "accelZ", "az", "AccZ", default=9.81)
+            if ax != 0.0 or ay != 0.0:
+                roll  = _m.degrees(_m.atan2(ay, az))
+                pitch = _m.degrees(_m.atan2(-ax, _m.sqrt(ay**2 + az**2)))
+        return round(roll, 2), round(pitch, 2), round(yaw, 2)
+
+    def read(self) -> dict:
+        raw = self._fetch_raw()
+        if raw is None:
+            raise ConnectionError(f"Cannot reach sensor board at {self._ip}")
+
+        lat    = self._f(raw, "lat", "latitude",  "Lat",  "gps_lat")
+        lon    = self._f(raw, "lon", "lng", "longitude", "Lon", "gps_lon")
+        gps_ok = self._gps_valid(raw, lat, lon)
+        roll, pitch, yaw = self._tilt(raw)
+        mq135  = self._f(raw, "mq135", "MQ135", "so2", "SO2", "air_quality")
+
+        reading = {
+            "timestamp":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "temperature":     round(self._f(raw, "temperature", "temp",  "Temp"),  2),
+            "humidity":        round(self._f(raw, "humidity",    "hum",   "Hum"),   2),
+            "pressure":        round(self._f(raw, "pressure",    "press", "Press",
+                                                  default=1013.25), 2),
+            "lat":             round(lat, 6) if gps_ok else None,
+            "lon":             round(lon, 6) if gps_ok else None,
+            "gps_valid":       gps_ok,
+            "gps_satellites":  int(self._f(raw, "gpsSats", "gps_sats", "satellites")),
+            "roll":            roll,
+            "pitch":           pitch,
+            "yaw":             yaw,
+            "water_detected":  self._b(raw, "waterDetected", "water_detected",
+                                           "water", "waterSensor", "flood"),
+            "mq2":             round(self._f(raw, "mq2",  "MQ2"),  2),
+            "mq4":             round(self._f(raw, "mq4",  "MQ4"),  2),
+            "mq135":           round(mq135, 2),
+            "air_toxicity":    round(mq135, 2),
+            "people_detected": self._prev_people,
+            "event_rate":      self._prev_event_rate,
+        }
+        self._prev_people     = reading["people_detected"]
+        self._prev_event_rate = reading["event_rate"]
+        return reading
+
+
+# ---------------------------------------------------------------------------
+# REAL HARDWARE STUB (serial)
 # ---------------------------------------------------------------------------
 
 class RealSensorInput(SensorInput):
-    """
-    Replace read() with actual hardware reads.
-    Expected firmware JSON line on serial:
-    {"temperature":29.1,"humidity":63.4,"pressure":1012.8,
-     "mq2":13.2,"mq4":9.1,"air_toxicity":16.0,
-     "people_detected":0,"event_rate":0.5}
-    """
+    """Serial-port hardware stub. Use HttpSensorInput for the ESP32 board."""
 
     def __init__(self, serial_port: str = "/dev/ttyUSB0", baud: int = 9600):
-        # TODO(REAL_SENSORS): import serial; self.ser = serial.Serial(...)
         raise NotImplementedError(
-            "RealSensorInput: wire up your hardware in __init__ and read()"
+            "Use HttpSensorInput for the ESP32 board at 10.161.238.74, "
+            "or wire up serial hardware here."
         )
 
     def read(self) -> dict:
-        # TODO(REAL_SENSORS):
-        # line = self.ser.readline().decode("utf-8").strip()
-        # data = json.loads(line)
-        # data["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # return data
         raise NotImplementedError
 
 
@@ -221,13 +358,14 @@ def burst_ratio(history: deque, short: int = 10, long: int = 20) -> float:
 # =============================================================================
 
 SENSOR_CFG = {
-    "temperature":  (28.5,  0.8, 7.0,  2.5, 0.15),
-    "humidity":     (65.0,  1.0, 8.0,  2.5, 0.20),
-    "pressure":     (1013.0,0.5, 6.0,  3.0, 0.05),
-    "mq2":          (12.0,  0.8, 6.0,  2.0, 0.20),
-    "mq4":          (8.0,   0.6, 5.0,  2.0, 0.15),
-    "air_toxicity": (15.0,  0.8, 6.0,  2.0, 0.25),
-    "event_rate":   (0.5,   0.3, 4.0,  2.5, 0.10),
+    "temperature":  (28.5,   0.8, 7.0, 2.5, 0.15),
+    "humidity":     (65.0,   1.0, 8.0, 2.5, 0.20),
+    "pressure":     (1013.0, 0.5, 6.0, 3.0, 0.05),
+    "mq2":          (12.0,   0.8, 6.0, 2.0, 0.20),
+    "mq4":          (8.0,    0.6, 5.0, 2.0, 0.15),
+    "mq135":        (15.0,   0.8, 6.0, 2.0, 0.25),
+    "air_toxicity": (15.0,   0.8, 6.0, 2.0, 0.25),
+    "event_rate":   (0.5,    0.3, 4.0, 2.5, 0.10),
 }
 
 ANOMALY_TYPE = {
@@ -235,6 +373,7 @@ ANOMALY_TYPE = {
     "humidity":     {"rising": "FLOOD_RISK",  "falling": "FIRE_RISK"},
     "mq2":          {"rising": "GAS_LEAK",    "falling": "CLEARING"},
     "mq4":          {"rising": "GAS_LEAK",    "falling": "CLEARING"},
+    "mq135":        {"rising": "TOXIC_BUILD", "falling": "CLEARING"},
     "air_toxicity": {"rising": "TOXIC_BUILD", "falling": "CLEARING"},
     "event_rate":   {"rising": "SURGE",       "falling": "QUIET"},
     "pressure":     {"rising": "PRESSURE",    "falling": "PRESSURE"},
@@ -466,13 +605,17 @@ def run(source: SensorInput, interval: float = 1.0):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="AEGIS Time-Series Anomaly Detector")
-    ap.add_argument("--mode", choices=["sim", "real"], default="sim")
+    ap.add_argument("--mode", choices=["sim", "http", "real"], default="sim",
+                    help='"sim" = simulation, "http" = live board at 10.161.238.74')
     ap.add_argument("--port", default="/dev/ttyUSB0")
     ap.add_argument("--interval", type=float, default=1.0)
     ap.add_argument("--scenario-interval", type=int, default=60)
     args = ap.parse_args()
 
-    if args.mode == "real":
+    if args.mode == "http":
+        src = HttpSensorInput()
+        print(f"HTTP sensor mode — board: http://{SENSOR_IP}")
+    elif args.mode == "real":
         src = RealSensorInput(serial_port=args.port)
         print(f"Real sensor mode — port: {args.port}")
     else:

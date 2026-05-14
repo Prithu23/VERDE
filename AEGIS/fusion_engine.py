@@ -91,6 +91,26 @@ TOXIC_RULES = [
     (-math.inf, 'NORMAL',   'Within Safe Limits'),
 ]
 
+MQ135_RULES = [
+    ( 60,       'CRITICAL', 'Lethal SO2/Air Toxicity — Immediate Evacuation'),
+    ( 40,       'WARNING',  'Dangerous Air Quality — PPE Required'),
+    ( 25,       'ELEVATED', 'Elevated SO2/Toxins — Monitor Closely'),
+    ( 15,       'CAUTION',  'Mild SO2 Trace'),
+    (-math.inf, 'NORMAL',   'Air Quality Within Safe Limits'),
+]
+
+WATER_RULES = [
+    (  0.5,     'WARNING',  'Water Intrusion — Flood/Electrical Risk'),
+    (-math.inf, 'NORMAL',   'No Water Detected'),
+]
+
+TILT_RULES = [
+    ( 30,       'WARNING',  'Severe Tilt — Structural Instability'),
+    ( 15,       'ELEVATED', 'Significant Tilt — Monitor Structure'),
+    (  5,       'CAUTION',  'Slight Tilt Detected'),
+    (-math.inf, 'NORMAL',   'Level — Stable'),
+]
+
 PEOPLE_RULES = [
     (  8,       'CRITICAL', 'Mass Gathering in Hazard Zone'),
     (  5,       'WARNING',  'Multiple Persons at Risk'),
@@ -113,6 +133,7 @@ CLASSIFIERS = {
     'pressure':        PRESS_RULES,
     'mq2':             MQ2_RULES,
     'mq4':             MQ4_RULES,
+    'mq135':           MQ135_RULES,
     'air_toxicity':    TOXIC_RULES,
     'people_detected': PEOPLE_RULES,
     'event_rate':      EVRATE_RULES,
@@ -135,6 +156,17 @@ def classify_all(reading: dict) -> dict:
         val = float(reading.get(sensor, 0))
         status, label = _classify(rules, val)
         result[sensor] = {'value': val, 'status': status, 'label': label, 'rank': RANK[status]}
+
+    # Water sensor (boolean → 0/1 float)
+    water_val = 1.0 if reading.get('water_detected') else 0.0
+    w_status, w_label = _classify(WATER_RULES, water_val)
+    result['water_detected'] = {'value': water_val, 'status': w_status, 'label': w_label, 'rank': RANK[w_status]}
+
+    # Tilt (max of |roll|, |pitch| in degrees)
+    tilt_val = max(abs(float(reading.get('roll', 0))), abs(float(reading.get('pitch', 0))))
+    t_status, t_label = _classify(TILT_RULES, tilt_val)
+    result['tilt'] = {'value': round(tilt_val, 1), 'status': t_status, 'label': t_label, 'rank': RANK[t_status]}
+
     return result
 
 
@@ -165,7 +197,7 @@ def detect_threats(reading: dict, sc: dict) -> tuple:
     hum   = _v(reading, 'humidity')
     mq2   = _v(reading, 'mq2')
     mq4   = _v(reading, 'mq4')
-    tox   = _v(reading, 'air_toxicity')
+    tox   = max(_v(reading, 'mq135'), _v(reading, 'air_toxicity'))
     ppl   = _v(reading, 'people_detected')
     evr   = _v(reading, 'event_rate')
     press = _v(reading, 'pressure')
@@ -278,6 +310,39 @@ def detect_threats(reading: dict, sc: dict) -> tuple:
                          'confidence': round(se, 3), 'contributing': list(set(sc2)),
                          'description': f"Pressure {press:.0f} hPa, event rate {evr:.1f}/s — structural or seismic stress indicated."})
 
+    # ── WATER / FLOOD RISK ─────────────────────────────────────────────────────
+    if reading.get('water_detected'):
+        we, wc = 0.70, ['water_detected']
+        if tox > 15 or mq2 > 8 or mq4 > 6:
+            we = min(we + 0.15, 1.0)
+            wc += [s for s in ['air_toxicity', 'mq2', 'mq4'] if _v(reading, s) > 5]
+        if ppl > 0:
+            we = min(we + 0.10, 1.0)
+            wc.append('people_detected')
+        sev = 'CRITICAL' if we >= 0.85 else 'HIGH' if we >= 0.55 else 'MEDIUM'
+        desc = 'Water intrusion detected'
+        if ppl > 0:
+            desc += f' — {int(ppl)} person(s) at risk'
+        threats.append({'id': 'FLOOD_RISK', 'label': 'Flood / Water Intrusion', 'severity': sev,
+                         'confidence': round(we, 3), 'contributing': list(set(wc)),
+                         'description': desc + '.'})
+        log.append(f"Water detected — confidence {we:.0%}")
+
+    # ── TILT / STRUCTURAL INSTABILITY ──────────────────────────────────────────
+    tilt_val = max(abs(float(reading.get('roll', 0))), abs(float(reading.get('pitch', 0))))
+    if tilt_val > 15:
+        tile, tilc = 0.0, ['tilt']
+        if   tilt_val > 30: tile += 0.80; log.append(f"Tilt {tilt_val:.1f}° > 30 — severe instability (+0.80)")
+        elif tilt_val > 20: tile += 0.55; log.append(f"Tilt {tilt_val:.1f}° > 20 — significant (+0.55)")
+        else:               tile += 0.35; log.append(f"Tilt {tilt_val:.1f}° > 15 — elevated (+0.35)")
+        if press < 990:
+            tile = min(tile + 0.20, 1.0); tilc.append('pressure')
+            log.append(f"Low pressure {press:.0f} hPa corroborates structural event (+0.20)")
+        sev = 'CRITICAL' if tile >= 0.75 else 'HIGH' if tile >= 0.50 else 'MEDIUM'
+        threats.append({'id': 'TILT_HAZARD', 'label': 'Structural Tilt', 'severity': sev,
+                         'confidence': round(tile, 3), 'contributing': list(set(tilc)),
+                         'description': f"Rover tilt {tilt_val:.1f}° — possible structural collapse or terrain hazard."})
+
     # ── COMPOUND EMERGENCY — three or more simultaneous HIGH+ threats ──────────
     high_threats = [t for t in threats if SEV_RANK[t['severity']] >= SEV_RANK['HIGH']]
     if len(high_threats) >= 3:
@@ -321,6 +386,8 @@ _THREAT_GUIDANCE = {
     'TOXIC_EXPOSURE':     lambda t: 'EMS: PPE required for entry' if SEV_RANK[t['severity']] >= 2 else None,
     'MASS_CASUALTY_RISK': lambda t: 'EMS: mass casualty protocol',
     'STRUCTURAL_STRESS':  lambda t: 'clear structure, await assessment' if SEV_RANK[t['severity']] >= 2 else None,
+    'FLOOD_RISK':         lambda t: 'isolate electrical systems, evacuate low areas',
+    'TILT_HAZARD':        lambda t: 'clear structure immediately — collapse risk' if SEV_RANK[t['severity']] >= 2 else None,
     'COMPOUND_EMERGENCY': lambda t: 'Control Room: all agencies',
 }
 

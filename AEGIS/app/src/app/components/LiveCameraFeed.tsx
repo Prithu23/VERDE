@@ -4,89 +4,48 @@ import { motion } from 'motion/react'
 import { useMissionLog } from '../hooks/useMissionLog'
 import { useDetectionState } from '../hooks/useDetectionState'
 
-// detect.py annotated MJPEG (laptop or ESP32 depending on --source)
-const VERDE_CAM_STREAM = 'http://localhost:8765'
-// ESP32-CAM raw stream — try port-81 MJPEG then port-80 snapshot
-const ESP32_STREAM     = 'http://10.97.202.27:81/stream'
-const ESP32_CAPTURE    = 'http://10.97.202.27/capture'
+// detect.py annotated MJPEG — always shows the active camera (ESP32-CAM / phone hotspot)
+const VERDE_STREAM = 'http://localhost:8765/video_feed'
 
-type Source      = 'laptop' | 'esp32'
-type EspMode     = 'stream' | 'snapshot' | 'offline'
-type LaptopStatus = 'connecting' | 'live' | 'offline'
+type FeedStatus = 'connecting' | 'live' | 'offline'
 
 export default function LiveCameraFeed() {
   const { totalEvents, lastEntry } = useMissionLog()
-  const detection = useDetectionState()          // per-frame live counts from detect.py
+  const detection = useDetectionState()
   const people = detection.people
   const damage = detection.rubble
   const spills = detection.spills
 
-  const [running, setRunning]       = useState(true)
-  const [source, setSource]         = useState<Source>('laptop')
+  const [running, setRunning]     = useState(true)
+  const [status, setStatus]       = useState<FeedStatus>('connecting')
 
-  // LAPTOP CAM (detect.py MJPEG stream)
-  const [laptopStatus, setLaptopStatus] = useState<LaptopStatus>('connecting')
-
-  // ESP32 fallback state
-  const [espMode, setEspMode]   = useState<EspMode>('stream')
-  const [snapSrc, setSnapSrc]   = useState('')
-
-  // Reset laptop status when toggling source/running
   useEffect(() => {
-    if (source === 'laptop' && running) setLaptopStatus('connecting')
-  }, [source, running])
+    if (running) setStatus('connecting')
+  }, [running])
 
-  // ESP32 snapshot polling
+  // Auto-retry when offline
   useEffect(() => {
-    if (!running || source !== 'esp32' || espMode !== 'snapshot') return
-    const refresh = () => setSnapSrc(`${ESP32_CAPTURE}?t=${Date.now()}`)
-    refresh()
-    const id = setInterval(refresh, 800)
-    return () => clearInterval(id)
-  }, [running, source, espMode])
-
-  // ESP32 offline auto-retry
-  useEffect(() => {
-    if (espMode !== 'offline') return
-    const id = setTimeout(() => setEspMode('stream'), 10_000)
+    if (status !== 'offline') return
+    const id = setTimeout(() => setStatus('connecting'), 8_000)
     return () => clearTimeout(id)
-  }, [espMode])
+  }, [status])
 
-  // Laptop CAM offline auto-retry
-  useEffect(() => {
-    if (laptopStatus !== 'offline') return
-    const id = setTimeout(() => setLaptopStatus('connecting'), 8_000)
-    return () => clearTimeout(id)
-  }, [laptopStatus])
+  const statusCls = {
+    connecting: 'text-yellow-400 border-yellow-500/40',
+    live:       'text-green-400  border-green-500/40',
+    offline:    'text-red-400    border-red-500/40',
+  }[status]
 
-  // ── Status label ────────────────────────────────────────────────────────
-  let statusLabel: string
-  let statusCls: string
-  if (!running) {
-    statusLabel = 'STOPPED'; statusCls = 'text-gray-400 border-gray-500/40'
-  } else if (source === 'laptop') {
-    const map = { connecting:'CONNECTING', live:'LIVE', offline:'OFFLINE' }
-    const cls = { connecting:'text-yellow-400 border-yellow-500/40', live:'text-green-400 border-green-500/40', offline:'text-red-400 border-red-500/40' }
-    statusLabel = map[laptopStatus]; statusCls = cls[laptopStatus]
-  } else {
-    const map: Record<EspMode,string> = { stream:'LIVE', snapshot:'SNAPSHOT', offline:'OFFLINE' }
-    const cls: Record<EspMode,string> = { stream:'text-green-400 border-green-500/40', snapshot:'text-cyan-400 border-cyan-500/40', offline:'text-red-400 border-red-500/40' }
-    statusLabel = map[espMode]; statusCls = cls[espMode]
-  }
-
-  const showRec = running && (
-    (source === 'laptop' && laptopStatus === 'live') ||
-    (source === 'esp32' && espMode !== 'offline')
-  )
-
-  const timestamp = lastEntry?.time ?? new Date().toLocaleString()
+  const statusLabel = !running ? 'STOPPED' : status.toUpperCase()
+  const showRec     = running && status === 'live'
+  const timestamp   = lastEntry?.time ?? new Date().toLocaleString()
+  const fpsLabel    = detection.fps > 0 ? `${detection.fps} fps · ${detection.source}` : null
 
   const detections = [
-    { label: 'People',    value: people, Icon: Users,   color: 'text-green-400'  },
-    { label: 'Rubble',    value: damage, Icon: Boxes,   color: 'text-red-400'    },
-    { label: 'Oil Spills',value: spills, Icon: Droplet, color: 'text-yellow-400' },
+    { label: 'People',     value: people, Icon: Users,   color: 'text-green-400'  },
+    { label: 'Rubble',     value: damage, Icon: Boxes,   color: 'text-red-400'    },
+    { label: 'Oil Spills', value: spills, Icon: Droplet, color: 'text-yellow-400' },
   ]
-  const fpsLabel = detection.fps > 0 ? `${detection.fps} fps · ${detection.source}` : null
 
   return (
     <div
@@ -97,28 +56,11 @@ export default function LiveCameraFeed() {
       <div className="flex items-center gap-2 mb-4 flex-wrap">
         <Camera className="w-5 h-5 text-cyan-400 flex-shrink-0" />
         <h2 className="text-lg font-bold text-cyan-400 tracking-wide">Live Camera Feed</h2>
-        <span className={`text-xs font-mono px-2 py-0.5 rounded border ${statusCls}`}>
+        <span className={`text-xs font-mono px-2 py-0.5 rounded border ${!running ? 'text-gray-400 border-gray-500/40' : statusCls}`}>
           {statusLabel}
         </span>
 
-        <div className="ml-auto flex items-center gap-2">
-          {/* Source toggle */}
-          <div className="flex rounded-lg border border-white/10 overflow-hidden text-xs">
-            <button
-              onClick={() => setSource('laptop')}
-              className={`px-3 py-1.5 transition-colors ${source === 'laptop' ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-500 hover:text-gray-300'}`}
-            >
-              LAPTOP CAM
-            </button>
-            <button
-              onClick={() => setSource('esp32')}
-              className={`px-3 py-1.5 transition-colors ${source === 'esp32' ? 'bg-cyan-500/20 text-cyan-400' : 'text-gray-500 hover:text-gray-300'}`}
-            >
-              ESP32
-            </button>
-          </div>
-
-          {/* Start / Stop */}
+        <div className="ml-auto">
           <button
             onClick={() => setRunning(r => !r)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
@@ -148,25 +90,27 @@ export default function LiveCameraFeed() {
             </div>
           )}
 
-          {/* ── LAPTOP CAM (detect.py MJPEG @ :8765) ── */}
-          {running && source === 'laptop' && laptopStatus !== 'offline' && (
+          {/* Live MJPEG from detect.py */}
+          {running && status !== 'offline' && (
             <img
-              key={laptopStatus}
-              src={VERDE_CAM_STREAM}
-              alt="Laptop annotated feed"
+              key={status === 'connecting' ? Date.now() : 'live'}
+              src={`${VERDE_STREAM}?t=${Date.now()}`}
+              alt="Phone camera feed"
               className="absolute inset-0 w-full h-full object-cover"
-              onLoad={() => setLaptopStatus('live')}
-              onError={() => setLaptopStatus('offline')}
+              onLoad={() => setStatus('live')}
+              onError={() => setStatus('offline')}
             />
           )}
-          {running && source === 'laptop' && laptopStatus === 'offline' && (
+
+          {/* Offline state */}
+          {running && status === 'offline' && (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center">
                 <WifiOff className="w-12 h-12 text-red-400/50 mx-auto mb-2" />
-                <p className="text-red-400/70 text-sm font-medium">detect.py not running</p>
-                <p className="text-gray-500 text-xs mt-1">Run: python detect.py</p>
+                <p className="text-red-400/70 text-sm font-medium">Camera not connected</p>
+                <p className="text-gray-500 text-xs mt-1">Run: python detect.py --ip &lt;camera-ip&gt;</p>
                 <button
-                  onClick={() => setLaptopStatus('connecting')}
+                  onClick={() => setStatus('connecting')}
                   className="mt-3 flex items-center gap-1.5 mx-auto px-3 py-1.5 rounded-lg text-xs border border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/10"
                 >
                   <RefreshCw className="w-3 h-3" /> Retry
@@ -175,38 +119,7 @@ export default function LiveCameraFeed() {
             </div>
           )}
 
-          {/* ── ESP32 MJPEG stream ── */}
-          {running && source === 'esp32' && espMode === 'stream' && (
-            <img
-              src={ESP32_STREAM}
-              alt="ESP32-CAM"
-              className="absolute inset-0 w-full h-full object-cover"
-              onError={() => setEspMode('snapshot')}
-            />
-          )}
-
-          {/* ── ESP32 snapshot fallback ── */}
-          {running && source === 'esp32' && espMode === 'snapshot' && snapSrc && (
-            <img
-              src={snapSrc}
-              alt="ESP32-CAM snapshot"
-              className="absolute inset-0 w-full h-full object-cover"
-              onError={() => setEspMode('offline')}
-            />
-          )}
-
-          {/* ── ESP32 offline ── */}
-          {running && source === 'esp32' && espMode === 'offline' && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center">
-                <WifiOff className="w-12 h-12 text-red-400/50 mx-auto mb-2" />
-                <p className="text-red-400/70 text-sm">ESP32-CAM Offline</p>
-                <p className="text-gray-500 text-xs mt-0.5">Retrying in 10 s…</p>
-              </div>
-            </div>
-          )}
-
-          {/* ── Overlays ── */}
+          {/* Overlays */}
           {running && (
             <>
               <div className="absolute top-3 left-3 bg-black/70 backdrop-blur-sm px-3 py-1 rounded text-xs text-cyan-400 font-mono border border-cyan-500/30">

@@ -11,17 +11,24 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ── Args ─────────────────────────────────────────────────────────────────────
 ap = argparse.ArgumentParser(description='VERDE detection engine')
-ap.add_argument('--source', default='esp32',
-                help='"esp32" for rover camera (default), "laptop" for webcam')
+ap.add_argument('--source', default='laptop',
+                help='"laptop" for webcam (default), "phone" for IP Webcam app, "esp32" for ESP32-CAM')
 ap.add_argument('--cam-index', type=int, default=-1,
                 help='Webcam index to use. -1 = auto-detect best (default)')
 ap.add_argument('--port', type=int, default=8765,
                 help='MJPEG stream port (default 8765)')
+ap.add_argument('--ip', default=None,
+                help='Phone IP for IP Webcam app (e.g. 192.168.43.1)')
 args = ap.parse_args()
 
-ESP32_IP    = "10.97.202.27"
+USE_WEBCAM   = args.source.lower() in ('laptop', '0')
+USE_PHONE    = args.source.lower() == 'phone'
+PHONE_IP     = args.ip or "192.168.43.1"
+# IP Webcam app (Android) streams MJPEG at :8080/video
+PHONE_STREAM = f"http://{PHONE_IP}:8080/video"
+
+ESP32_IP    = PHONE_IP
 CAPTURE_URL = f"http://{ESP32_IP}/capture"
-USE_WEBCAM  = args.source.lower() in ('laptop', '0')
 
 # ── MJPEG server ──────────────────────────────────────────────────────────────
 _lock        = threading.Lock()
@@ -29,15 +36,23 @@ _current_jpg = None
 
 class _Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+
+        if self.path != "/video_feed":
+            self.send_response(404)
+            self.end_headers()
+            return
+
         self.send_response(200)
         self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Cache-Control', 'no-cache')
         self.end_headers()
+
         try:
             while True:
                 with _lock:
                     jpg = _current_jpg
+
                 if jpg:
                     self.wfile.write(
                         b'--frame\r\n'
@@ -45,10 +60,13 @@ class _Handler(BaseHTTPRequestHandler):
                         b'Content-Length: ' + str(len(jpg)).encode() + b'\r\n'
                         b'\r\n'
                     )
+
                     self.wfile.write(jpg)
                     self.wfile.write(b'\r\n')
                     self.wfile.flush()
+
                 time.sleep(1 / 20)
+
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
     def log_message(self, *_): pass
@@ -68,12 +86,26 @@ print(f"[VERDE] Models ready  |  rubble classes: {list(disaster_model.names.valu
 
 mission_log = []
 
-# ── Webcam setup ──────────────────────────────────────────────────────────────
+
+def _rover_gps() -> tuple:
+    """Read latest GPS fix from sensor_log.json written by sensor_reader.py."""
+    try:
+        with open("sensor_log.json") as f:
+            records = json.load(f)
+        if records:
+            last = records[-1]
+            if last.get("gps_valid"):
+                return last.get("lat"), last.get("lon")
+    except Exception:
+        pass
+    return None, None
+
+# ── Camera setup ──────────────────────────────────────────────────────────────
 cap = None
 if USE_WEBCAM:
     indices = [args.cam_index] if args.cam_index >= 0 else [1, 0]
     for idx in indices:
-        test = cv2.VideoCapture(idx)          # default backend — DSHOW fails by-index on this system
+        test = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
         if test.isOpened():
             ret, frame = test.read()
             if ret and frame is not None:
@@ -83,21 +115,52 @@ if USE_WEBCAM:
                 break
         test.release()
     if cap is None:
-        print("[VERDE] ERROR: No webcam found — run with --source esp32 or check camera")
+        print("[VERDE] ERROR: No webcam found")
+
+if USE_PHONE:
+    print(f"[VERDE] Phone camera  →  {PHONE_STREAM}")
+    cap = cv2.VideoCapture(PHONE_STREAM)
+    if not cap.isOpened():
+        print(f"[VERDE] WARNING: Cannot open phone stream — is IP Webcam app running at {PHONE_IP}:8080?")
 
 # ── Frame getter ──────────────────────────────────────────────────────────────
 def get_frame():
-    if USE_WEBCAM:
+
+    global CAPTURE_URL
+
+    # Webcam or phone camera mode (both use cv2.VideoCapture)
+    if USE_WEBCAM or USE_PHONE:
+
         if cap is None:
             return None
+
         ret, frame = cap.read()
-        return frame if ret else None
+
+        if ret:
+            return frame
+
+        return None
+
+    # ESP32 mode
     try:
-        resp = urllib.request.urlopen(CAPTURE_URL, timeout=5)
-        arr  = np.frombuffer(resp.read(), dtype=np.uint8)
-        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    except Exception as e:
-        print(f"[VERDE] ESP32 frame error: {e}")
+
+        resp = urllib.request.urlopen(CAPTURE_URL, timeout=1)
+
+        data = resp.read()
+
+        if not data:
+            return None
+
+        arr = np.frombuffer(data, dtype=np.uint8)
+
+        if len(arr) == 0:
+            return None
+
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+        return frame
+
+    except Exception:
         return None
 
 # ── Drawing helpers ───────────────────────────────────────────────────────────
@@ -110,11 +173,11 @@ def draw_box(frame, x1, y1, x2, y2, label, color):
     cv2.putText(frame, label, (x1 + 3, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.55, txt_color, 1, cv2.LINE_AA)
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
-src_label  = "LAPTOP" if USE_WEBCAM else "ESP32"
+src_label  = "LAPTOP" if USE_WEBCAM else ("PHONE" if USE_PHONE else "ESP32")
 t0         = time.time()
 frame_n    = 0
 
-print(f"[VERDE] Source: {src_label}  |  Press Q in the OpenCV window to quit")
+print(f"[VERDE] Source: {src_label}  |  Camera: {CAPTURE_URL}  |  Press Q in the OpenCV window to quit")
 
 while True:
     frame = get_frame()
@@ -181,10 +244,11 @@ while True:
 
     # ── Mission log ───────────────────────────────────────────────────────
     if people_count or disaster_detections or spill_detections:
+        _lat, _lon = _rover_gps()
         entry = {
             "time":   ts,
-            "lat":    None,
-            "lon":    None,
+            "lat":    _lat,
+            "lon":    _lon,
             "people": people_count,
             "damage": disaster_detections,
             "spills": spill_detections,
@@ -199,7 +263,7 @@ while True:
         break
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
-if cap:
+if cap and (USE_WEBCAM or USE_PHONE):
     cap.release()
 cv2.destroyAllWindows()
 

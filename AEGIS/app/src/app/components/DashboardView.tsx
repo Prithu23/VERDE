@@ -11,13 +11,47 @@ import FusionStatus from './FusionStatus';
 export default function DashboardView() {
   const { sensor, ehs, live } = useSensorData(3000);
 
-  const hasHighAlert = sensor.air_toxicity > 30 || sensor.mq2 > 25 || sensor.temperature > 38;
+  // MQ2 >= 40 % → explosive gas CRITICAL (highest priority)
+  const isMQ2Critical = sensor.mq2 >= 40;
+
+  // General high-alert conditions
+  const hasHighAlert =
+    (!isMQ2Critical && sensor.mq2 > 25) ||
+    sensor.mq135 > 30 ||
+    sensor.air_toxicity > 30 ||
+    sensor.temperature > 38 ||
+    sensor.water_detected;
 
   return (
     <div className="h-full flex flex-col gap-4 pb-4">
-      {/* High Alert Banner */}
+
+      {/* ── MQ2 CRITICAL explosive gas banner (highest priority) ── */}
+      {isMQ2Critical && (
+        <div className="flex-shrink-0 rounded-2xl bg-gradient-to-r from-red-600/30 to-red-700/20 border-2 border-red-500/70 p-4 shadow-lg shadow-red-500/40 animate-pulse">
+          <div className="flex items-center gap-4">
+            <div className="flex-shrink-0">
+              <svg className="w-8 h-8 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd"
+                  d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd" />
+              </svg>
+            </div>
+            <div className="flex-1">
+              <h3 className="text-xl font-bold text-red-300 mb-1">
+                ⚠ CRITICAL — EXPLOSIVE GAS DETECTED — EVACUATE IMMEDIATELY
+              </h3>
+              <p className="text-red-200 text-sm font-medium">
+                MQ2 flammable gas at <strong>{sensor.mq2.toFixed(1)}%</strong> — well above explosive threshold (40%).
+                No ignition sources. Shut off gas supply. Evacuate all personnel.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── General high-alert banner ── */}
       {hasHighAlert && (
-        <div className="flex-shrink-0 rounded-2xl bg-gradient-to-r from-red-500/20 to-red-600/10 border border-red-500/40 p-4 shadow-lg shadow-red-500/20 animate-pulse">
+        <div className="flex-shrink-0 rounded-2xl bg-gradient-to-r from-red-500/20 to-red-600/10 border border-red-500/40 p-4 shadow-lg shadow-red-500/20">
           <div className="flex items-start gap-4">
             <div className="flex-shrink-0 mt-1">
               <svg className="w-6 h-6 text-red-500" fill="currentColor" viewBox="0 0 20 20">
@@ -29,15 +63,17 @@ export default function DashboardView() {
             <div className="flex-1">
               <h3 className="text-lg font-bold text-red-300 mb-1">HIGH ALERT — CRITICAL SENSOR READING</h3>
               <p className="text-red-200 text-sm">
-                {sensor.air_toxicity > 30 ? `Air toxicity at ${sensor.air_toxicity.toFixed(1)}% — ` : ''}
-                {sensor.mq2 > 25 ? `MQ2 gas at ${sensor.mq2.toFixed(1)}% — ` : ''}
-                {sensor.temperature > 38 ? `Temperature at ${sensor.temperature.toFixed(1)}°C` : ''}
+                {sensor.water_detected    ? 'Water intrusion detected — flood/electrical risk. ' : ''}
+                {sensor.mq135 > 30        ? `SO2/Air toxicity at ${sensor.mq135.toFixed(1)}%. ` : ''}
+                {sensor.air_toxicity > 30 && sensor.mq135 <= 30 ? `Air toxicity at ${sensor.air_toxicity.toFixed(1)}%. ` : ''}
+                {sensor.mq2 > 25          ? `MQ2 gas at ${sensor.mq2.toFixed(1)}%. ` : ''}
+                {sensor.temperature > 38  ? `Temperature at ${sensor.temperature.toFixed(1)}°C.` : ''}
               </p>
             </div>
           </div>
         </div>
       )}
-
+      
       {/* Climate Parameters */}
       <div className="flex-shrink-0">
         <div className="flex items-center justify-between mb-3">
@@ -55,16 +91,16 @@ export default function DashboardView() {
       {/* Gas Analysis + Live Map */}
       <div className="grid grid-cols-2 gap-4 flex-shrink-0">
         <GasAnalysis sensor={sensor} />
-        <LiveMap />
+        <LiveMap sensor={sensor} />
       </div>
 
-      {/* Camera Feed + Air Toxicity */}
+      {/* Camera Feed + Air Toxicity (MQ135) */}
       <div className="grid grid-cols-3 gap-4 flex-1">
         <div className="col-span-2 flex flex-col">
           <LiveCameraFeed />
         </div>
 
-        {/* Air Toxicity — live */}
+        {/* MQ135 SO2 / Air Toxicity panel */}
         <div className="rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 p-6 hover:border-cyan-400/50 hover:shadow-[0_0_30px_rgba(6,182,212,0.4)] transition-all duration-300"
           style={{ boxShadow: '0 0 20px rgba(6, 182, 212, 0.2)' }}
         >
@@ -73,34 +109,34 @@ export default function DashboardView() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8m0 8l-9-2m9 2l9-2" />
             </svg>
-            <h2 className="text-lg font-bold text-cyan-400 tracking-wide">Air Toxicity</h2>
+            <h2 className="text-lg font-bold text-cyan-400 tracking-wide">SO2 / Air Quality</h2>
           </div>
 
           <div className="space-y-4 flex flex-col justify-center">
             <div className="text-center">
               <div className={`text-4xl font-bold mb-2 ${
-                sensor.air_toxicity > 40 ? 'text-red-400' :
-                sensor.air_toxicity > 25 ? 'text-orange-400' : 'text-cyan-400'
+                sensor.mq135 > 40 ? 'text-red-400' :
+                sensor.mq135 > 25 ? 'text-orange-400' : 'text-cyan-400'
               }`}>
-                {sensor.air_toxicity.toFixed(1)}%
+                {sensor.mq135.toFixed(1)}%
               </div>
-              <div className="text-sm text-gray-400">Toxicity Level</div>
+              <div className="text-sm text-gray-400">MQ135 — SO2 / Air Toxicity</div>
             </div>
 
             <div className="relative h-2 bg-white/10 rounded-full overflow-hidden">
               <div className="h-full bg-gradient-to-r from-cyan-400 to-red-500 rounded-full transition-all duration-700"
-                style={{ width: `${Math.min(100, sensor.air_toxicity)}%` }} />
+                style={{ width: `${Math.min(100, sensor.mq135)}%` }} />
             </div>
 
             <div className={`mt-4 p-3 rounded-lg text-center text-xs ${
-              sensor.air_toxicity > 40
+              sensor.mq135 > 40
                 ? 'bg-red-500/10 border border-red-500/30 text-red-300'
-                : sensor.air_toxicity > 25
+                : sensor.mq135 > 25
                 ? 'bg-orange-500/10 border border-orange-500/30 text-orange-300'
                 : 'bg-cyan-500/10 border border-cyan-500/20 text-cyan-400'
             }`}>
-              {sensor.air_toxicity > 40 ? '⚠ Critical — Evacuate area'
-               : sensor.air_toxicity > 25 ? '⚠ Elevated — Monitor closely'
+              {sensor.mq135 > 40 ? '⚠ Critical — Evacuate area'
+               : sensor.mq135 > 25 ? '⚠ Elevated — Monitor closely'
                : '✓ Within safe limits'}
             </div>
 

@@ -1,11 +1,12 @@
-import { MapPin, Navigation, Loader, LocateFixed, Wifi, CrosshairIcon } from 'lucide-react';
+import { MapPin, Navigation, Loader, LocateFixed, Wifi, CrosshairIcon, Radio } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Circle, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useMissionLog } from '../hooks/useMissionLog';
+import type { SensorReading } from '../hooks/useSensorData';
 
-// ── Leaflet icons ─────────────────────────────────────────────────────────
+// ── Leaflet icons ─────────────────────────────────────────────────────────────
 const gpsIcon = L.divIcon({
   className: '',
   html: `<div style="position:relative;width:36px;height:36px;display:flex;align-items:center;justify-content:center;">
@@ -26,16 +27,27 @@ const ipIcon = L.divIcon({
   iconSize: [32, 32], iconAnchor: [16, 16],
 });
 
+// Rover marker — orange diamond
+const roverIcon = L.divIcon({
+  className: '',
+  html: `<div style="position:relative;width:36px;height:36px;display:flex;align-items:center;justify-content:center;">
+    <div style="width:13px;height:13px;background:#f97316;border:2.5px solid #fff;transform:rotate(45deg);
+      box-shadow:0 0 12px #f97316,0 0 28px rgba(249,115,22,0.5);z-index:2;position:relative;"></div>
+    <div style="position:absolute;width:30px;height:30px;border:1.5px solid rgba(249,115,22,0.5);border-radius:50%;animation:pulse 2s infinite;"></div>
+  </div>`,
+  iconSize: [36, 36], iconAnchor: [18, 18],
+});
+
 const eventIcon = L.divIcon({
   className: '',
   html: `<div style="width:10px;height:10px;background:#f97316;border-radius:50%;border:2px solid #fff;box-shadow:0 0 6px #f97316;"></div>`,
   iconSize: [10, 10], iconAnchor: [5, 5],
 });
 
-// ── Auto-pan + zoom ───────────────────────────────────────────────────────
+// ── Auto-pan + zoom ───────────────────────────────────────────────────────────
 function FlyTo({ lat, lon, zoom }: { lat: number; lon: number; zoom: number }) {
-  const map   = useMap();
-  const prev  = useRef<{ lat: number; lon: number } | null>(null);
+  const map  = useMap();
+  const prev = useRef<{ lat: number; lon: number } | null>(null);
   useEffect(() => {
     if (!prev.current) {
       map.setView([lat, lon], zoom, { animate: false });
@@ -47,8 +59,8 @@ function FlyTo({ lat, lon, zoom }: { lat: number; lon: number; zoom: number }) {
   return null;
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────
-type Source  = 'gps' | 'ip';
+// ── Types ─────────────────────────────────────────────────────────────────────
+type Source    = 'gps' | 'ip';
 type PermState = 'unknown' | 'granted' | 'prompt' | 'denied';
 
 interface Coords {
@@ -59,18 +71,22 @@ interface Coords {
 }
 
 interface Address {
-  road?:        string;
-  suburb?:      string;
-  neighbourhood?:string;
-  city?:        string;
-  state?:       string;
-  postcode?:    string;
+  road?:          string;
+  suburb?:        string;
+  neighbourhood?: string;
+  city?:          string;
+  state?:         string;
+  postcode?:      string;
 }
 
-// ── Hooks ─────────────────────────────────────────────────────────────────
+interface Props {
+  sensor: SensorReading;
+}
+
+// ── Hooks ─────────────────────────────────────────────────────────────────────
 async function fetchIpCoords(): Promise<Coords> {
-  const r    = await fetch('/api/location', { cache: 'no-store' });
-  const d    = await r.json();
+  const r = await fetch('/api/location', { cache: 'no-store' });
+  const d = await r.json();
   return { lat: d.lat, lon: d.lon, accuracy: d.accuracy ?? 1500, source: 'ip' };
 }
 
@@ -80,8 +96,8 @@ async function fetchAddress(lat: number, lon: number): Promise<Address> {
   return d.address ?? {};
 }
 
-// ── Component ─────────────────────────────────────────────────────────────
-export default function LiveMap() {
+// ── Component ─────────────────────────────────────────────────────────────────
+export default function LiveMap({ sensor }: Props) {
   const [coords,  setCoords]  = useState<Coords | null>(null);
   const [address, setAddress] = useState<Address | null>(null);
   const [perm,    setPerm]    = useState<PermState>('unknown');
@@ -91,7 +107,12 @@ export default function LiveMap() {
   const { log }  = useMissionLog();
   const eventMarkers = log.filter(e => e.lat !== null && e.lon !== null);
 
-  // ── Reverse geocode whenever GPS coords change ─────────────────────────
+  // Rover GPS from sensor board
+  const roverCoords = sensor.gps_valid && sensor.lat !== null && sensor.lon !== null
+    ? { lat: sensor.lat!, lon: sensor.lon! }
+    : null;
+
+  // ── Reverse geocode whenever GPS coords change ────────────────────────────
   const reverseGeocode = useCallback(async (lat: number, lon: number) => {
     try {
       const addr = await fetchAddress(lat, lon);
@@ -99,7 +120,7 @@ export default function LiveMap() {
     } catch {}
   }, []);
 
-  // ── Start high-accuracy GPS watch ──────────────────────────────────────
+  // ── Start high-accuracy browser GPS watch ─────────────────────────────────
   const startGps = useCallback(() => {
     if (!navigator.geolocation) return;
     if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
@@ -124,9 +145,8 @@ export default function LiveMap() {
     );
   }, [reverseGeocode]);
 
-  // ── Mount: IP immediately, GPS in parallel ────────────────────────────
+  // ── Mount: IP immediately, GPS in parallel ────────────────────────────────
   useEffect(() => {
-    // IP location — instant, no permission
     fetchIpCoords()
       .then(c => {
         setCoords(prev => prev?.source === 'gps' ? prev : c);
@@ -134,7 +154,6 @@ export default function LiveMap() {
       })
       .catch(() => setLoading(false));
 
-    // Check current permission state
     navigator.permissions?.query({ name: 'geolocation' as PermissionName })
       .then(result => {
         setPerm(result.state as PermState);
@@ -144,39 +163,37 @@ export default function LiveMap() {
           if (result.state === 'granted') startGps();
         };
       })
-      .catch(() => {
-        // permissions API unavailable — try GPS directly
-        startGps();
-      });
+      .catch(() => startGps());
 
     return () => {
       if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
     };
   }, [startGps]);
 
-  // ── "Enable GPS" button handler ────────────────────────────────────────
   const requestGps = useCallback(() => {
     setPerm('prompt');
     startGps();
   }, [startGps]);
 
-  // ── Address string ────────────────────────────────────────────────────
+  // ── Decide map center: prefer rover GPS, then browser GPS, then IP ────────
+  const mapCenter = roverCoords ?? coords;
+  const isGps     = coords?.source === 'gps';
+  const zoom       = roverCoords ? 18 : isGps ? 18 : 13;
+  const marker     = isGps ? gpsIcon : ipIcon;
+
+  // ── Address string ────────────────────────────────────────────────────────
   const addressLine = address
     ? [address.road, address.suburb ?? address.neighbourhood, address.city]
         .filter(Boolean).join(', ')
     : coords?.source === 'ip' ? 'City-level (enable GPS for street precision)' : '';
 
-  const isGps  = coords?.source === 'gps';
-  const zoom   = isGps ? 18 : 13;
-  const marker = isGps ? gpsIcon : ipIcon;
-
-  // ── Status badge ──────────────────────────────────────────────────────
+  // ── Status badge ──────────────────────────────────────────────────────────
   type BadgeKey = 'gps' | 'ip' | 'loading';
   const badgeKey: BadgeKey = loading ? 'loading' : isGps ? 'gps' : 'ip';
   const BADGE: Record<BadgeKey, { label: string; cls: string }> = {
-    loading: { label: 'LOCATING…',  cls: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' },
-    gps:     { label: 'GPS LIVE',   cls: 'bg-green-500/10  border-green-500/30  text-green-400'  },
-    ip:      { label: 'IP APPROX',  cls: 'bg-cyan-500/10   border-cyan-500/30   text-cyan-400'   },
+    loading: { label: 'LOCATING…', cls: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' },
+    gps:     { label: 'GPS LIVE',  cls: 'bg-green-500/10  border-green-500/30  text-green-400'  },
+    ip:      { label: 'IP APPROX', cls: 'bg-cyan-500/10   border-cyan-500/30   text-cyan-400'   },
   };
   const badge = BADGE[badgeKey];
 
@@ -192,7 +209,6 @@ export default function LiveMap() {
           <h2 className="text-lg font-bold text-cyan-400 tracking-wide">Live Map</h2>
         </div>
         <div className="flex items-center gap-2">
-          {/* Enable GPS button — only shown when not yet granted */}
           {perm !== 'granted' && (
             <button
               onClick={requestGps}
@@ -201,6 +217,13 @@ export default function LiveMap() {
               <CrosshairIcon className="w-3 h-3" />
               {perm === 'denied' ? 'Re-enable GPS' : 'Enable Precise GPS'}
             </button>
+          )}
+          {/* Rover GPS badge */}
+          {roverCoords && (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-medium bg-orange-500/10 border-orange-500/30 text-orange-400">
+              <Radio className="w-3 h-3 animate-pulse" />
+              ROVER GPS · {sensor.gps_satellites}sat
+            </div>
           )}
           <div className={`flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-medium ${badge.cls}`}>
             {badgeKey === 'loading' ? <Loader className="w-3 h-3 animate-spin" />
@@ -213,9 +236,7 @@ export default function LiveMap() {
 
       {/* Address line */}
       {addressLine && (
-        <p className="text-xs text-gray-400 mb-3 truncate">
-          {addressLine}
-        </p>
+        <p className="text-xs text-gray-400 mb-3 truncate">{addressLine}</p>
       )}
 
       {/* GPS denied hint */}
@@ -227,7 +248,6 @@ export default function LiveMap() {
 
       {/* ── Map ── */}
       <div className="relative h-72 rounded-xl overflow-hidden mb-4 border border-cyan-500/20">
-        {/* Loading overlay — only before first fix */}
         {loading && (
           <div className="absolute inset-0 z-[9999] flex items-center justify-center bg-[#060f1e]/95">
             <div className="text-center">
@@ -237,7 +257,6 @@ export default function LiveMap() {
           </div>
         )}
 
-        {/* GPS precision prompt — floating button on map */}
         {!loading && !isGps && perm === 'prompt' && (
           <div className="absolute bottom-12 left-1/2 -translate-x-1/2 z-[9999]">
             <button
@@ -251,8 +270,8 @@ export default function LiveMap() {
         )}
 
         <MapContainer
-          center={coords ? [coords.lat, coords.lon] : [20, 78]}
-          zoom={coords ? zoom : 4}
+          center={mapCenter ? [mapCenter.lat, mapCenter.lon] : [20, 78]}
+          zoom={mapCenter ? zoom : 4}
           style={{ height: '100%', width: '100%' }}
           zoomControl={false}
           attributionControl={false}
@@ -264,6 +283,7 @@ export default function LiveMap() {
             maxZoom={20}
           />
 
+          {/* Operator position (browser GPS / IP) */}
           {coords && (
             <>
               <Marker position={[coords.lat, coords.lon]} icon={marker} />
@@ -278,8 +298,34 @@ export default function LiveMap() {
                   opacity: 0.4,
                 }}
               />
-              <FlyTo lat={coords.lat} lon={coords.lon} zoom={zoom} />
             </>
+          )}
+
+          {/* Rover GPS position from sensor board */}
+          {roverCoords && (
+            <>
+              <Marker position={[roverCoords.lat, roverCoords.lon]} icon={roverIcon}>
+                <Popup>
+                  <div style={{ fontSize: 11 }}>
+                    <b>ROVER</b><br />
+                    {roverCoords.lat.toFixed(6)}°, {roverCoords.lon.toFixed(6)}°<br />
+                    Satellites: {sensor.gps_satellites}<br />
+                    Tilt R:{sensor.roll.toFixed(1)}° P:{sensor.pitch.toFixed(1)}°
+                  </div>
+                </Popup>
+              </Marker>
+              <Circle
+                center={[roverCoords.lat, roverCoords.lon]}
+                radius={8}
+                pathOptions={{ color: '#f97316', fillColor: '#f97316', fillOpacity: 0.15, weight: 1.5 }}
+              />
+              <FlyTo lat={roverCoords.lat} lon={roverCoords.lon} zoom={zoom} />
+            </>
+          )}
+
+          {/* If no rover GPS, pan to operator */}
+          {!roverCoords && coords && (
+            <FlyTo lat={coords.lat} lon={coords.lon} zoom={zoom} />
           )}
 
           {/* Detection event markers */}
@@ -297,29 +343,44 @@ export default function LiveMap() {
       </div>
 
       {/* ── Coords row ── */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-          <div className="text-xs text-gray-400 mb-1">Latitude</div>
-          <div className="text-sm font-mono text-cyan-400">
-            {coords ? `${coords.lat.toFixed(6)}°` : '—'}
-          </div>
-        </div>
-        <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-          <div className="text-xs text-gray-400 mb-1">Longitude</div>
-          <div className="text-sm font-mono text-cyan-400">
-            {coords ? `${coords.lon.toFixed(6)}°` : '—'}
-          </div>
-        </div>
-        <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-          <div className="text-xs text-gray-400 mb-1">Accuracy</div>
-          <div className={`text-sm font-mono font-bold ${
-            !coords               ? 'text-gray-500'   :
-            coords.accuracy < 50  ? 'text-green-400'  :
-            coords.accuracy < 300 ? 'text-yellow-400' : 'text-orange-400'
-          }`}>
-            {coords ? `±${Math.round(coords.accuracy)} m` : '—'}
-          </div>
-        </div>
+      <div className={`grid gap-3 ${roverCoords ? 'grid-cols-3' : 'grid-cols-3'}`}>
+        {roverCoords ? (
+          <>
+            <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/30">
+              <div className="text-xs text-orange-400 mb-1">Rover Lat</div>
+              <div className="text-sm font-mono text-orange-300">{roverCoords.lat.toFixed(6)}°</div>
+            </div>
+            <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/30">
+              <div className="text-xs text-orange-400 mb-1">Rover Lon</div>
+              <div className="text-sm font-mono text-orange-300">{roverCoords.lon.toFixed(6)}°</div>
+            </div>
+            <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/30">
+              <div className="text-xs text-orange-400 mb-1">Satellites</div>
+              <div className="text-sm font-mono font-bold text-green-400">{sensor.gps_satellites}</div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+              <div className="text-xs text-gray-400 mb-1">Latitude</div>
+              <div className="text-sm font-mono text-cyan-400">{coords ? `${coords.lat.toFixed(6)}°` : '—'}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+              <div className="text-xs text-gray-400 mb-1">Longitude</div>
+              <div className="text-sm font-mono text-cyan-400">{coords ? `${coords.lon.toFixed(6)}°` : '—'}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+              <div className="text-xs text-gray-400 mb-1">Accuracy</div>
+              <div className={`text-sm font-mono font-bold ${
+                !coords               ? 'text-gray-500'  :
+                coords.accuracy < 50  ? 'text-green-400' :
+                coords.accuracy < 300 ? 'text-yellow-400': 'text-orange-400'
+              }`}>
+                {coords ? `±${Math.round(coords.accuracy)} m` : '—'}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

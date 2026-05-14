@@ -33,7 +33,7 @@ os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 
 # ── Import from existing engine modules ─────────────────────────────────────
-from anomaly_detector import SimulatedSensorInput, AnomalyDetector, _write_sensor_log
+from anomaly_detector import SimulatedSensorInput, HttpSensorInput, AnomalyDetector, _write_sensor_log, SENSOR_IP
 from fusion_engine    import decide  as fusion_decide
 from ehs_calculator   import compute as ehs_compute
 
@@ -210,9 +210,12 @@ def _print_status(n: int, reading: dict, fusion: dict, ehs: dict, ms: float):
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
-def run(zone: str, interval: float, scenario_interval: int, alerts_enabled: bool):
+def run(zone: str, interval: float, scenario_interval: int, alerts_enabled: bool, mode: str = 'sim'):
     api_key   = _load_api_key()
-    sim       = SimulatedSensorInput(scenario_interval=scenario_interval)
+    if mode == 'http':
+        sim = HttpSensorInput()
+    else:
+        sim = SimulatedSensorInput(scenario_interval=scenario_interval)
     detector  = AnomalyDetector()
     alert_mgr = AlertManager(api_key, alerts_enabled)
 
@@ -221,8 +224,9 @@ def run(zone: str, interval: float, scenario_interval: int, alerts_enabled: bool
     print('  AEGIS COORDINATOR  --  VERDE Emergency Response Platform')
     print('=' * 72)
     print(f'  Zone              : {zone}')
+    print(f'  Mode              : {"HTTP — board at " + SENSOR_IP if mode == "http" else "simulation"}')
     print(f'  Tick interval     : {interval}s')
-    print(f'  Scenario cycle    : {scenario_interval}s')
+    print(f'  Scenario cycle    : {scenario_interval}s (sim only)')
     print(f'  Engines active    : Anomaly Detector | Sensor Fusion | EHS Calculator')
     print(f'  Dashboard outputs : sensor_log.json | anomaly_log.json | '
           f'fusion_log.json | ehs_log.json')
@@ -290,6 +294,8 @@ if __name__ == '__main__':
                     help='Seconds per simulation scenario (default 60)')
     ap.add_argument('--alerts',            action='store_true',
                     help='Arm auto-SMS when zone hits CRITICAL or CATASTROPHIC')
+    ap.add_argument('--mode',              choices=['sim', 'http'], default='sim',
+                    help='"sim" = simulation (default), "http" = live board at 10.161.238.74')
     args = ap.parse_args()
 
     run(
@@ -297,4 +303,5 @@ if __name__ == '__main__':
         interval=args.interval,
         scenario_interval=args.scenario_interval,
         alerts_enabled=args.alerts,
+        mode=args.mode,
     )
