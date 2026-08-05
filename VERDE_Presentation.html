@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<title>VERDE Presentation</title>
+<style>
+body { font-family: Arial, sans-serif; background: #111; color: #eee; margin: 0; padding: 0; }
+.slide { display: none; padding: 50px 80px 100px 80px; }
+.slide.active { display: block; }
+h1 { font-size: 46px; color: #00bcd4; }
+h2 { font-size: 30px; color: #00bcd4; margin-bottom: 16px; }
+p  { font-size: 17px; line-height: 1.7; color: #ccc; }
+ul { font-size: 17px; line-height: 2.2; color: #ccc; padding-left: 20px; }
+table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+th { background: #1a3a3a; color: #00bcd4; padding: 10px; border: 1px solid #333; text-align: left; }
+td { padding: 9px 12px; border: 1px solid #333; color: #ccc; font-size: 15px; }
+tr:nth-child(even) td { background: #1a1a1a; }
+.green { color: #4caf50; }
+.red { color: #f44336; }
+hr { border: none; border-top: 1px solid #444; margin: 20px 0; }
+.bottom { position: fixed; bottom: 0; left: 0; right: 0; background: #222; padding: 14px; text-align: center; border-top: 1px solid #333; }
+.bottom button { padding: 10pxLO 36px; font-size: 16px; font-weight: bold; background: #00bcd4; color: #000; border: none; border-radius: 6px; cursor: pointer; margin: 0 10px; }
+.bottom button:hover { background: #0097a7; color: #fff; }
+.bottom span { color: #888; font-size: 14px; margin: 0 20px; }
+</style>
+</head>
+<body>
+
+<div id="slide1" class="slide active">
+  <h1>VERDE</h1>
+  <p style="font-size:13px;color:#00bcd4;letter-spacing:2px;">VEHICULAR ENVIRONMENTAL RECON FOR DETECTION AND EXPLORATION</p>
+  <hr>
+  <p>An AI-powered autonomous disaster response platform combining real-time sensor fusion, 3-model computer vision, and environmental hazard scoring.</p>
+  <br>
+  <ul>
+    <li>🤖 <b>3 YOLO Models</b> — people detection, rubble, oil spills</li>
+    <li>🛰 <b>8 Sensors</b> on a single ESP32 board</li>
+    <li>⚠️ <b>EHS Hazard Score</b> — 0 to 100, updated every 2 seconds</li>
+    <li>🔥 <b>MQ2 Critical Alert</b> — instant EVACUATE signal when gas &gt; 40%</li>
+    <li>📊 <b>Live Web Dashboard</b> — React, accessible from any browser</li>
+    <li>📱 <b>SMS Alerts</b> via Fast2SMS on threshold breach</li>
+  </ul>
+</div>
+
+<div id="slide2" class="slide">
+  <h2>The Problem — Disaster Response is Blind, Slow &amp; Costly</h2>
+  <ul>
+    <li>🚨 Rescue teams enter collapse zones with <b>zero information</b> on gas, flooding, or survivors</li>
+    <li>⏱ Manual recon wastes the first 72 hours — the <b>golden survival window</b></li>
+    <li>☠️ NDRF &amp; fire personnel face <b>explosive gas and toxic air</b> with no prior warning</li>
+    <li>💰 Commercial disaster robots cost <span class="red"><b>₹2 Lakh – ₹20 Lakhs</b></span> — unaffordable for NGOs</li>
+    <li>📉 Less than <b>4%</b> of Indian municipalities have robotic disaster response</li>
+    <li>🇮🇳 India records <b>~8,000+ disaster fatalities/year</b> — ~65% preventable with early detection</li>
+  </ul>
+</div>
+
+<div id="slide3" class="slide">
+  <h2>Solution — AEGIS (Autonomous Emergency Guidance &amp; Intelligence System)</h2>
+  <ul>
+    <li>🧠 <b>Triple AI Vision:</b> YOLOv8 (people) + rubble.pt + oil.pt — live at 20+ fps</li>
+    <li>🌡️ <b>8-Sensor Fusion:</b> Temp · Humidity · Pressure · GPS · MPU-6050 · Water · MQ2 · MQ4 · MQ135</li>
+    <li>⚡ <b>Critical Alert:</b> MQ2 ≥ 40% triggers instant EVACUATE banner on dashboard</li>
+    <li>🗺️ <b>Live GPS Map:</b> Every detection event is geotagged and logged automatically</li>
+    <li>📊 <b>React Dashboard:</b> Camera feed, gas charts, gyro tilt, alert feed — all live</li>
+    <li>📱 <b>SMS Dispatch:</b> Alerts sent to registered responders on threshold breach</li>
+  </ul>
+  <hr>
+  <p><b>Pipeline:</b> ESP32 → sensor_reader.py → Fusion Engine → EHS Calculator → Dashboard → SMS</p>
+</div>
+
+<div id="slide4" class="slide">
+  <h2>Cost — <span class="green">₹9,130</span> vs <span class="red">~₹20 Lakhs</span> (Indian Industrial Scale)</h2>
+  <table>
+    <tr>
+      <th>Component</th>
+      <th>VERDE (Ours)</th>
+      <th>Indian Industrial Solution</th>
+      <th>Market Reference</th>
+    </tr>
+    <tr><td>Robot / rover platform</td><td class="green">₹4,650</td><td class="red">₹8,00,000</td><td>DRDO / Tata Advanced Systems UGV</td></tr>
+    <tr><td>Gas detection sensors</td><td class="green">₹420</td><td class="red">₹85,000</td><td>Honeywell / Detex India CBRN module</td></tr>
+    <tr><td>Camera + computer vision</td><td class="green">₹400</td><td class="red">₹2,50,000</td><td>Hikvision AI camera + edge processor</td></tr>
+    <tr><td>GPS + IMU + env sensors</td><td class="green">₹810</td><td class="red">₹60,000</td><td>u-blox M9N + Bosch BMI088 (industrial)</td></tr>
+    <tr><td>Dashboard / software</td><td class="green">₹0 (open-source)</td><td class="red">₹3,00,000</td><td>Proprietary NDRF / SCADA licence</td></tr>
+    <tr><td>System integration &amp; setup</td><td class="green">₹0 (self-built)</td><td class="red">₹4,00,000</td><td>Systems integrator fee (India avg)</td></tr>
+    <tr><td>Annual maintenance (AMC)</td><td class="green">~₹500</td><td class="red">₹2,00,000/yr</td><td>Standard 10% AMC on hardware cost</td></tr>
+    <tr>
+      <td><b>TOTAL (first year)</b></td>
+      <td><b class="green">₹9,130</b></td>
+      <td><b class="red">~₹19,95,000</b></td>
+      <td><b>Indian market pricing</b></td>
+    </tr>
+  </table>
+  <br>
+  <p style="font-size:19px;"><b class="green">218× cheaper</b> than an equivalent Indian industrial deployment — same situational awareness, fraction of the cost.</p>
+</div>
+
+<div id="slide5" class="slide">
+  <h2>Social Benefits — Who Does VERDE Protect?</h2>
+  <ul>
+    <li>🧑‍🚒 <b>Responders:</b> MQ2 &amp; EHS alerts keep NDRF and fire teams out of lethal zones</li>
+    <li>🏘️ <b>Rural Communities:</b> At ₹9,130 any gram panchayat or NGO can deploy VERDE</li>
+    <li>⏱️ <b>Survivors:</b> AI detection cuts recon from hours to minutes — maximises 72-hr window</li>
+    <li>🌊 <b>Multi-Hazard:</b> Floods · gas leaks · air toxicity · structural collapse · chemical spills</li>
+    <li>📡 <b>Offline Capable:</b> No cloud needed — works when telecom infrastructure is destroyed</li>
+    <li>🔬 <b>Open Source:</b> Any team can extend sensors, retrain models, integrate with NDMA/IDRN</li>
+  </ul>
+  <hr>
+  <p style="font-style:italic; color:#888;">
+    "Technology that only the wealthy can afford saves only the wealthy.
+    VERDE is built so that every life has equal access to the intelligence that protects it."
+  </p>
+</div>
+
+<div class="bottom">
+  <button type="button" id="prevBtn">← Prev</button>
+  <span id="counter">Slide 1 of 5</span>
+  <button type="button" id="nextBtn">Next →</button>
+</div>
+
+<script>
+var current = 1;
+var total = 5;
+
+function showSlide(n) {
+  for (var i = 1; i <= total; i++) {
+    document.getElementById('slide' + i).classList.remove('active');
+  }
+  document.getElementById('slide' + n).classList.add('active');
+  document.getElementById('counter').textContent = 'Slide ' + n + ' of ' + total;
+  window.scrollTo(0, 0);
+}
+
+document.getElementById('nextBtn').onclick = function() {
+  if (current < total) { current++; showSlide(current); }
+};
+
+document.getElementById('prevBtn').onclick = function() {
+  if (current > 1) { current--; showSlide(current); }
+};
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'ArrowRight') { if (current < total) { current++; showSlide(current); } }
+  if (e.key === 'ArrowLeft')  { if (current > 1)     { current--; showSlide(current); } }
+});
+</script>
+
+</body>
+</html>
