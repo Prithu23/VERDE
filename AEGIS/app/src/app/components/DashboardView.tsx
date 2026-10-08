@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useSensorData } from '../hooks/useSensorData';
 import MetricsCards from './MetricsCards';
 import GasAnalysis from './GasAnalysis';
@@ -10,6 +11,21 @@ import FusionStatus from './FusionStatus';
 
 export default function DashboardView() {
   const { sensor, ehs, live } = useSensorData(3000);
+
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        fetch('http://localhost:8766/gps', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ lat: coords.latitude, lon: coords.longitude }),
+        }).catch(() => {});
+      },
+      () => {},
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  }, []);
 
   // MQ2 >= 40 % → explosive gas CRITICAL (highest priority)
   const isMQ2Critical = sensor.mq2 >= 40;
