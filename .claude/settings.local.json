@@ -4,7 +4,9 @@
       "Bash(curl -s --max-time 3 -o /dev/null -w \"%{http_code} %{size_download}b\" http://localhost:8765)",
       "Bash(curl -s --max-time 4 -D - http://localhost:8765)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5177/)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5178/)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5178/)",
+      "Bash(cmake --version)",
+      "Bash(where cl *)"
     ]
   }
 }
