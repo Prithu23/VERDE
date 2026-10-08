@@ -32,3 +32,17 @@ Thumbs.db
 
 # Logs (runtime-generated — not source)
 *.log
+
+# Vite cache / build
+.vite/
+app/dist/
+
+# Runtime-generated log files (written by the Python engines)
+sensor_log.json
+fusion_log.json
+anomaly_log.json
+ehs_log.json
+detection_state.json
+
+# Secrets
+app/.env.local
