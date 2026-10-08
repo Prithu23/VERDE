@@ -41,26 +41,30 @@ export default function ReportsView() {
       fetch('/mission_log.json').then(r => r.json()).catch(() => [] as MissionEntry[]),
       fetch('/audio_log.json').then(r => r.json()).catch(() => [] as AudioEntry[]),
     ]).then(([mission, audio]: [MissionEntry[], AudioEntry[]]) => {
-      const damageEntries = mission.filter(e => e.damage.length > 0);
-      const avgDamageConf =
-        damageEntries.length > 0
-          ? (damageEntries.reduce((s, e) => s + e.damage[0].confidence, 0) / damageEntries.length) * 100
-          : 0;
-      const humanAudio = audio.filter(e => e.category === 'Human');
-      const avgAudioConf =
-        humanAudio.length > 0
-          ? (humanAudio.reduce((s, e) => s + e.confidence, 0) / humanAudio.length) * 100
-          : 0;
-      setLiveData({
-        totalFrames: mission.length,
-        maxPeople: mission.length > 0 ? Math.max(...mission.map(e => e.people)) : 0,
-        damageEvents: damageEntries.length,
-        avgDamageConfidence: avgDamageConf,
-        spillEvents: mission.filter(e => e.spills.length > 0).length,
-        audioEvents: humanAudio.length,
-        avgAudioConfidence: avgAudioConf,
-        latestTime: mission.length > 0 ? mission[mission.length - 1].time : 'N/A',
-      });
+      try {
+        const damageEntries = mission.filter(e => e.damage.length > 0);
+        const avgDamageConf =
+          damageEntries.length > 0
+            ? (damageEntries.reduce((s, e) => s + e.damage[0].confidence, 0) / damageEntries.length) * 100
+            : 0;
+        const humanAudio = audio.filter(e => e.category === 'Human');
+        const avgAudioConf =
+          humanAudio.length > 0
+            ? (humanAudio.reduce((s, e) => s + e.confidence, 0) / humanAudio.length) * 100
+            : 0;
+        setLiveData({
+          totalFrames: mission.length,
+          maxPeople: mission.reduce((m, e) => Math.max(m, e.people), 0),
+          damageEvents: damageEntries.length,
+          avgDamageConfidence: avgDamageConf,
+          spillEvents: mission.filter(e => e.spills.length > 0).length,
+          audioEvents: humanAudio.length,
+          avgAudioConfidence: avgAudioConf,
+          latestTime: mission.length > 0 ? mission[mission.length - 1].time : 'N/A',
+        });
+      } catch (e) {
+        console.error('ReportsView data processing error:', e);
+      }
     });
   }, []);
 
@@ -95,7 +99,7 @@ export default function ReportsView() {
           : 0;
       const data: LiveData = {
         totalFrames: mission.length,
-        maxPeople: mission.length > 0 ? Math.max(...mission.map(e => e.people)) : 0,
+        maxPeople: mission.reduce((m, e) => Math.max(m, e.people), 0),
         damageEvents: damageEntries.length,
         avgDamageConfidence: avgDamageConf,
         spillEvents: mission.filter(e => e.spills.length > 0).length,

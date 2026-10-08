@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Toaster, toast } from 'sonner';
 import Sidebar from './components/Sidebar';
 import DashboardView from './components/DashboardView';
@@ -13,9 +13,23 @@ const contacts: Record<string, { name: string; phone: string }> = {
 
 type NotifyState = 'idle' | 'sending' | 'sent' | 'error';
 
+const VIEWS = ['dashboard', 'reports', 'bbmp'];
+
 export default function App() {
   const [activeView, setActiveView] = useState('dashboard');
   const [notifyState, setNotifyState] = useState<Record<string, NotifyState>>({});
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') {
+        setActiveView(v => VIEWS[(VIEWS.indexOf(v) + 1) % VIEWS.length]);
+      } else if (e.key === 'ArrowLeft') {
+        setActiveView(v => VIEWS[(VIEWS.indexOf(v) - 1 + VIEWS.length) % VIEWS.length]);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const alerts = [
     {

@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npm run *)",
-      "PowerShell(cd \"c:\\\\Users\\\\admin\\\\OneDrive\\\\Apps\\\\Codes\\\\verde\\\\AEGIS\"; Get-ChildItem -Recurse | Where-Object {$_.Extension -in \".pt\",\".tflite\",\".csv\"} | Select-Object Name, @{N='MB';E={[math]::Round\\($_.Length/1MB,1\\)}} | Sort-Object MB -Descending)"
+      "PowerShell(cd \"c:\\\\Users\\\\admin\\\\OneDrive\\\\Apps\\\\Codes\\\\verde\\\\AEGIS\"; Get-ChildItem -Recurse | Where-Object {$_.Extension -in \".pt\",\".tflite\",\".csv\"} | Select-Object Name, @{N='MB';E={[math]::Round\\($_.Length/1MB,1\\)}} | Sort-Object MB -Descending)",
+      "PowerShell(Start-Process python -ArgumentList \"detect.py\",\"--source\",\"laptop\" -WorkingDirectory \"c:\\\\Users\\\\admin\\\\OneDrive\\\\Apps\\\\Codes\\\\verde\\\\AEGIS\" -WindowStyle Normal)",
+      "PowerShell(Start-Process cmd -ArgumentList \"/k\",\"cd /d `\"c:\\\\Users\\\\admin\\\\OneDrive\\\\Apps\\\\Codes\\\\verde\\\\AEGIS\\\\app`\" && npm run dev\" -WindowStyle Normal)",
+      "Bash(ping -n 3 10.161.238.28)"
     ]
   }
 }

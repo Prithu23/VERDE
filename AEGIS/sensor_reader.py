@@ -1,7 +1,7 @@
 """
 AEGIS Sensor Reader
 ===================
-Polls the sensor board at 10.161.238.74 every <interval> seconds,
+Polls the sensor board at 10.161.238.28 every <interval> seconds,
 normalises the JSON response, and writes sensor_log.json.
 
 Sensors read:
@@ -21,15 +21,62 @@ Run alongside detect.py, fusion_engine.py, ehs_calculator.py:
 import json
 import math
 import time
+import threading
 import argparse
 from datetime import datetime
 from pathlib import Path
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.request
 
-SENSOR_IP   = "10.161.238.74"
+SENSOR_IP   = "10.161.238.28"
 LOG_PATH    = Path("sensor_log.json")
+GPS_PORT    = 8766
+
+# ── Browser GPS receiver ───────────────────────────────────────────────────────
+# Dashboard posts navigator.geolocation coords here; we override ESP32 GPS with them.
+_gps_lock = threading.Lock()
+_browser_gps: dict | None = None   # {lat, lon} once browser sends coords
+
+def _set_browser_gps(lat: float, lon: float):
+    global _browser_gps
+    with _gps_lock:
+        _browser_gps = {"lat": lat, "lon": lon}
+
+def _get_browser_gps() -> dict | None:
+    with _gps_lock:
+        return dict(_browser_gps) if _browser_gps else None
+
+class _GPSHandler(BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._cors(); self.end_headers()
+
+    def do_POST(self):
+        if not self.path.startswith("/gps"):
+            self.send_response(404); self.end_headers(); return
+        try:
+            data = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+            _set_browser_gps(float(data["lat"]), float(data["lon"]))
+            print(f"\n[GPS] Browser → {data['lat']:.5f}, {data['lon']:.5f}")
+            self.send_response(200); self._cors()
+            self.send_header("Content-Type", "application/json"); self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+        except Exception:
+            self.send_response(400); self.end_headers()
+
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin",  "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def log_message(self, *_): pass
+
+threading.Thread(
+    target=HTTPServer(("0.0.0.0", GPS_PORT), _GPSHandler).serve_forever,
+    daemon=True,
+).start()
 # Try these endpoints in order
-ENDPOINTS   = ["/data", "/csv", "/sensor", "/sensors", "/all", "/readings", "/"]
+ENDPOINTS   = ["/json", "/data", "/csv", "/sensor", "/sensors", "/all", "/readings", "/"]
 
 # Field name aliases for positional CSV (order ESP32 sketches typically emit)
 _POSITIONAL_FIELDS = [
@@ -199,14 +246,34 @@ def normalise(raw: dict, prev_people: int = 0, prev_event_rate: float = 0.5) -> 
     gps_ok = _gps_valid(raw, lat, lon)
     roll, pitch, yaw = _tilt(raw)
 
-    mq135 = _f(raw, "mq135", "MQ135", "so2", "SO2", "air_quality", "airQuality")
+    # Override GPS with browser coords if ESP32 GPS has no fix
+    browser = _get_browser_gps()
+    if browser and not gps_ok:
+        lat, lon, gps_ok = browser["lat"], browser["lon"], True
+
+    def _mq(val: float) -> float:
+        # ESP32 sends raw 12-bit ADC (0-4095); scale to 0-100 percentage
+        return round((val / 4095.0) * 100.0, 2) if val > 100 else round(val, 2)
+
+    mq2   = _mq(_f(raw, "mq2",   "MQ2"))
+    mq4   = _mq(_f(raw, "mq4",   "MQ4"))
+    mq135 = _mq(_f(raw, "mq135", "MQ135", "so2", "SO2", "air_quality", "airQuality"))
+
+    # Water sensor: ESP32 sends raw ADC — treat as detected only above threshold
+    water_raw     = _f(raw, "waterDetected", "water_detected", "water",
+                            "waterSensor", "flood", "water_sensor")
+    water_detected = (water_raw > 500) if water_raw > 1 else _b(raw, "waterDetected", "water_detected")
+
+    pressure = _f(raw, "pressure", "press", "Press", "Pressure")
+    # BMP not connected → ESP32 sends 0; use standard sea-level default instead
+    if pressure == 0.0:
+        pressure = 1013.25
 
     return {
         "timestamp":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "temperature":     round(_f(raw, "temperature", "temp",  "Temp",  "Temperature"), 2),
         "humidity":        round(_f(raw, "humidity",    "hum",   "Hum",   "Humidity"),    2),
-        "pressure":        round(_f(raw, "pressure",    "press", "Press", "Pressure",
-                                        default=1013.25), 2),
+        "pressure":        round(pressure, 2),
         "lat":             round(lat, 6) if gps_ok else None,
         "lon":             round(lon, 6) if gps_ok else None,
         "gps_valid":       gps_ok,
@@ -214,14 +281,13 @@ def normalise(raw: dict, prev_people: int = 0, prev_event_rate: float = 0.5) -> 
         "roll":            roll,
         "pitch":           pitch,
         "yaw":             yaw,
-        "water_detected":  _b(raw, "waterDetected", "water_detected", "water",
-                                   "waterSensor", "flood", "water_sensor"),
-        "mq2":             round(_f(raw, "mq2",  "MQ2"),  2),
-        "mq4":             round(_f(raw, "mq4",  "MQ4"),  2),
-        "mq135":           round(mq135, 2),
-        "air_toxicity":    round(mq135, 2),   # kept for backward compatibility
-        "people_detected": prev_people,        # filled by detect.py via detection_state.json
-        "event_rate":      prev_event_rate,    # filled by anomaly_detector.py
+        "water_detected":  water_detected,
+        "mq2":             mq2,
+        "mq4":             mq4,
+        "mq135":           mq135,
+        "air_toxicity":    mq135,
+        "people_detected": prev_people,
+        "event_rate":      prev_event_rate,
     }
 
 
@@ -313,7 +379,7 @@ def run(interval: float, max_records: int):
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="AEGIS Sensor Reader — polls http://10.161.238.74")
+    ap = argparse.ArgumentParser(description="AEGIS Sensor Reader — polls http://10.161.238.28")
     ap.add_argument("--interval",    type=float, default=2.0,
                     help="Poll interval in seconds (default 2)")
     ap.add_argument("--max-records", type=int,   default=200,
