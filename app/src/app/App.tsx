@@ -83,7 +83,7 @@ export default function App() {
       const data = await res.json();
       if (data.return) {
         setNotifyState(prev => ({ ...prev, [alert.agency]: 'sent' }));
-        toast.success(`WhatsApp sent to ${contact.name} (${contact.phone})`);
+        toast.success(`Telegram sent to ${contact.name} (${contact.phone})`);
       } else {
         throw new Error(Array.isArray(data.message) ? data.message[0] : data.message);
       }

@@ -16,13 +16,13 @@ A rover base-station system that combines computer vision, audio classification 
                                 │       ├─ sensor log        ──▶ sensor_log.json
  Microphone ──▶ audio_detect.py ┘       ├─ anomaly detector  ──▶ anomaly_log.json
    (fire / collapse / distress)         ├─ health score      ──▶ ehs_log.json
-                                        └─ WhatsApp alerts (CallMeBot, optional)
+                                        └─ Telegram alerts (optional)
 
  app/ (React + Vite dashboard) polls the JSON files and embeds detect.py's video stream
 ```
 
 Everything runs on the laptop. The three models (YOLOv8 ×3, YAMNet) run locally; the only
-network calls are the map tiles, the map's location lookup and the optional WhatsApp alert.
+network calls are the map tiles, the map's location lookup and the optional Telegram alert.
 
 **No made-up values.** Hazard weights and thresholds are fitted from trials recorded on the
 rover (see below). A sensor the board does not report shows as "—", a source that stops
@@ -84,14 +84,16 @@ cd app
 npm install
 ```
 
-To enable WhatsApp alerts (sent through CallMeBot), create `app/.env.local` (it is git-ignored).
-Each recipient registers once with CallMeBot and gets their own key:
+To enable Telegram alerts, create a bot with @BotFather and put its token in `app/.env.local`
+(it is git-ignored). Each recipient presses Start on the bot once; `python coordinator.py --telegram-setup`
+then lists their chat IDs, which are mapped to the contacts' phone numbers:
 
 ```
-CALLMEBOT_KEYS=9100000000:123456,9200000000:654321
+TELEGRAM_BOT_TOKEN=123456789:AAH...
+TELEGRAM_CHAT_IDS=9100000000:111111111,9200000000:222222222
 ```
 
-Without keys the coordinator runs alerts in dry-run mode. Check the path with
+Without these the coordinator runs alerts in dry-run mode. Check the path with
 `python coordinator.py --test-sms`.
 
 ---
@@ -139,7 +141,7 @@ Open four terminals in the repo root.
 ```bash
 python coordinator.py                           # live, board at the default address
 python coordinator.py --sensor-ip 192.168.1.50  # board at another address
-python coordinator.py --alerts                  # arm WhatsApp alerts on CRITICAL / CATASTROPHIC
+python coordinator.py --alerts                  # arm Telegram alerts on CRITICAL / CATASTROPHIC
 python coordinator.py --mode sim                # simulated sensors, labelled SIMULATED
 ```
 
@@ -235,7 +237,7 @@ reports drift (CUSUM), jumps (z-score), trends and several sensors rising togeth
 on the dashboard and is not an input to the fusion model or the score. Its sensitivity settings
 are standard statistical defaults, not fitted.
 
-**Alerts**: with `--alerts`, the coordinator sends a WhatsApp message (with the rover's GPS position when it has a fix) to the contacts routed to the active
+**Alerts**: with `--alerts`, the coordinator sends a Telegram message (plus a map pin of the rover's GPS position when it has a fix) to the contacts routed to the active
 threats when the zone escalates to CRITICAL or CATASTROPHIC, with a 300-second cooldown per contact.
 
 ---
