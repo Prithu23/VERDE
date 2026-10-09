@@ -87,6 +87,10 @@ interface Props {
 async function fetchIpCoords(): Promise<Coords> {
   const r = await fetch('/api/location', { cache: 'no-store' });
   const d = await r.json();
+  // Offline, or the lookup failed: report no location rather than crash the page
+  if (!r.ok || typeof d.lat !== 'number' || typeof d.lon !== 'number') {
+    throw new Error('location lookup unavailable');
+  }
   return { lat: d.lat, lon: d.lon, accuracy: d.accuracy ?? 1500, source: 'ip' };
 }
 

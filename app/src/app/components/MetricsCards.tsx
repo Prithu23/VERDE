@@ -7,10 +7,12 @@ interface Props {
 }
 
 export default function MetricsCards({ sensor }: Props) {
+  const miss = (k: string) => sensor.missing.includes(k);
   const metrics = [
     {
       id: 'temperature',
       label: 'Temperature',
+      missing: miss('temperature'),
       value: Number(sensor.temperature ?? 0).toFixed(1),
       unit: '°C',
       icon: Thermometer,
@@ -18,11 +20,12 @@ export default function MetricsCards({ sensor }: Props) {
       colorEnd: '#3b82f6',
       glowColor: 'rgba(6, 182, 212, 0.3)',
       percentage: Math.min(100, Math.max(0, ((sensor.temperature - 10) / 50) * 100)),
-      warn: sensor.temperature > 35,
+      warn: false,   // values only; hazards are judged by the trained fusion model
     },
     {
       id: 'humidity',
       label: 'Humidity',
+      missing: miss('humidity'),
       value: Number(sensor.humidity ?? 0).toFixed(0),
       unit: '%',
       icon: Droplets,
@@ -30,24 +33,29 @@ export default function MetricsCards({ sensor }: Props) {
       colorEnd: '#0891b2',
       glowColor: 'rgba(6, 182, 212, 0.3)',
       percentage: sensor.humidity,
-      warn: sensor.humidity < 35 || sensor.humidity > 80,
+      warn: false,
     },
     {
       id: 'pressure',
       label: 'Pressure',
+      missing: miss('pressure'),
       value: Number(sensor.pressure ?? 0).toFixed(1),
       unit: 'hPa',
       icon: Gauge,
       colorStart: '#0891b2',
       colorEnd: '#0e7490',
       glowColor: 'rgba(8, 145, 178, 0.3)',
-      percentage: Math.min(100, Math.max(0, ((sensor.pressure - 980) / 60) * 100)),
+      // 850–1050 hPa covers sea level up to about 1,500 m
+      percentage: Math.min(100, Math.max(0, ((sensor.pressure - 850) / 200) * 100)),
       warn: false,
     },
   ];
 
   const maxTilt = Math.max(Math.abs(sensor.roll), Math.abs(sensor.pitch));
-  const tiltWarn = maxTilt > 15;
+  const tiltMissing = miss('roll') && miss('pitch');
+  const waterMissing = miss('water_detected');
+  const tiltWarn = false;   // values only; hazards are judged by the trained fusion model
+  void maxTilt;
 
   return (
     <div className="space-y-4">
@@ -56,7 +64,7 @@ export default function MetricsCards({ sensor }: Props) {
         {metrics.map((metric) => {
           const Icon = metric.icon;
           const circumference = 2 * Math.PI * 45;
-          const offset = circumference - (metric.percentage / 100) * circumference;
+          const offset = circumference - ((metric.missing ? 0 : metric.percentage) / 100) * circumference;
 
           return (
             <div
@@ -98,10 +106,11 @@ export default function MetricsCards({ sensor }: Props) {
                 <div className="text-center">
                   <div className={`text-4xl font-bold bg-gradient-to-r bg-clip-text text-transparent
                     ${metric.warn ? 'from-orange-400 to-red-400' : 'from-white to-gray-300'}`}>
-                    {metric.value}
-                    <span className="text-2xl ml-1">{metric.unit}</span>
+                    {metric.missing ? '—' : metric.value}
+                    {!metric.missing && <span className="text-2xl ml-1">{metric.unit}</span>}
                   </div>
                   <div className="text-gray-400 mt-1 font-medium tracking-wide">{metric.label}</div>
+                  {metric.missing && <div className="text-xs text-gray-600 mt-0.5">no data from sensor board</div>}
                 </div>
               </div>
             </div>
@@ -126,7 +135,7 @@ export default function MetricsCards({ sensor }: Props) {
             <Waves className={`w-10 h-10 flex-shrink-0 ${sensor.water_detected ? 'text-blue-400' : 'text-gray-600'}`} />
             <div>
               <div className={`text-2xl font-bold ${sensor.water_detected ? 'text-blue-300 animate-pulse' : 'text-gray-500'}`}>
-                {sensor.water_detected ? 'DETECTED' : 'CLEAR'}
+                {waterMissing ? 'NO DATA' : sensor.water_detected ? 'DETECTED' : 'CLEAR'}
               </div>
               <div className="text-sm text-gray-400 mt-0.5">Water Sensor</div>
               {sensor.water_detected && (
@@ -159,8 +168,8 @@ export default function MetricsCards({ sensor }: Props) {
                   return (
                     <div key={label}>
                       <div className="text-xs text-gray-500">{label}</div>
-                      <div className={`text-base font-mono font-bold ${color}`}>
-                        {Number(val ?? 0).toFixed(1)}°
+                      <div className={`text-base font-mono font-bold ${tiltMissing ? 'text-gray-600' : color}`}>
+                        {miss(label.toLowerCase()) ? '—' : `${Number(val ?? 0).toFixed(1)}°`}
                       </div>
                     </div>
                   );

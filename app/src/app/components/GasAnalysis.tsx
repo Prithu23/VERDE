@@ -6,11 +6,17 @@ interface Props {
   sensor: SensorReading;
 }
 
+// Gas values are the percent rise over each sensor's clean-air level
+// (0 = clean air, 100 = double). This panel only shows them; whether a rise
+// is a hazard is decided by the trained fusion model.
 export default function GasAnalysis({ sensor }: Props) {
+  const miss = (k: string) => sensor.missing.includes(k);
+  const noGas = miss('mq2') && miss('mq4') && miss('mq135');
+  const calibrating = !!sensor.gas_calibrating;
   const data = [
-    { name: 'MQ2 - Flammable', value: Math.max(0.1, sensor.mq2),   color: '#ef4444' },
-    { name: 'MQ4 - Methane',   value: Math.max(0.1, sensor.mq4),   color: '#06b6d4' },
-    { name: 'MQ135 - SO2',     value: Math.max(0.1, sensor.mq135), color: '#f59e0b' },
+    { key: 'mq2',   name: 'MQ2 - Flammable',   value: Math.max(0.1, sensor.mq2),   color: '#ef4444' },
+    { key: 'mq4',   name: 'MQ4 - Methane',     value: Math.max(0.1, sensor.mq4),   color: '#06b6d4' },
+    { key: 'mq135', name: 'MQ135 - Air quality', value: Math.max(0.1, sensor.mq135), color: '#f59e0b' },
   ];
 
   const CustomTooltip = ({ active, payload }: any) => {
@@ -18,17 +24,14 @@ export default function GasAnalysis({ sensor }: Props) {
       return (
         <div className="bg-black/90 backdrop-blur-xl border border-cyan-400/50 rounded-lg p-3">
           <p className="text-white font-medium">{payload[0].name}</p>
-          <p className="text-cyan-400">{payload[0].value.toFixed(1)}%</p>
+          <p className="text-cyan-400">+{payload[0].value.toFixed(0)}% over clean air</p>
         </div>
       );
     }
     return null;
   };
 
-  const mq2Warn   = sensor.mq2   > 20;
-  const mq4Warn   = sensor.mq4   > 15;
-  const mq135Warn = sensor.mq135 > 25;
-  const mq2Crit   = sensor.mq2   >= 40;
+  const mq2Warn = false, mq4Warn = false, mq135Warn = false, mq2Crit = false;
 
   return (
     <div
@@ -42,6 +45,7 @@ export default function GasAnalysis({ sensor }: Props) {
       <div className="flex items-center gap-2 mb-4">
         <Activity className="w-5 h-5 text-cyan-400" />
         <h2 className="text-lg font-bold text-cyan-400 tracking-wide">Gas Analysis</h2>
+        <span className="text-[10px] text-gray-500">% rise over each sensor's clean-air level</span>
         {mq2Crit && (
           <span className="ml-auto text-xs text-red-400 font-bold animate-pulse">🔴 MQ2 CRITICAL</span>
         )}
@@ -50,14 +54,24 @@ export default function GasAnalysis({ sensor }: Props) {
         )}
       </div>
 
-      <div className="h-72">
+      {(noGas || calibrating) && (
+        <div className="h-72 flex flex-col items-center justify-center gap-2 text-center">
+          <Activity className={`w-8 h-8 ${calibrating ? 'text-blue-400 animate-pulse' : 'text-gray-700'}`} />
+          <p className="text-sm text-gray-400">
+            {calibrating ? 'Learning each gas sensor\'s clean-air baseline…' : 'No gas sensor data from the board'}
+          </p>
+          {calibrating && <p className="text-xs text-gray-600">Takes about 30 readings. Keep the rover in clean air.</p>}
+        </div>
+      )}
+
+      {!(noGas || calibrating) && <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
               data={data}
               cx="50%" cy="50%"
               labelLine={false}
-              label={({ name, percent }) => `${name.split(' - ')[0]}: ${(percent * 100).toFixed(1)}%`}
+              label={({ name, value }) => (Number(value) > 0.5 ? `${name.split(' - ')[0]}: +${Number(value).toFixed(0)}%` : '')}
               outerRadius={90} innerRadius={45}
               fill="#8884d8" dataKey="value"
               animationBegin={0} animationDuration={800}
@@ -72,7 +86,7 @@ export default function GasAnalysis({ sensor }: Props) {
               formatter={(value) => <span className="text-gray-300 text-sm">{value}</span>} />
           </PieChart>
         </ResponsiveContainer>
-      </div>
+      </div>}
 
       <div className="grid grid-cols-3 gap-2 mt-2">
         {data.map((item) => {
@@ -88,8 +102,8 @@ export default function GasAnalysis({ sensor }: Props) {
                          'bg-white/5 border-white/10'
               }`}
             >
-              <div className="text-xl font-bold" style={{ color: item.color }}>
-                {item.value.toFixed(1)}%
+              <div className="text-xl font-bold" style={{ color: miss(item.key) ? '#4b5563' : item.color }}>
+                {miss(item.key) ? '—' : `+${(sensor as any)[item.key].toFixed(0)}%`}
               </div>
               <div className="text-xs text-gray-400 mt-0.5">
                 {item.name.split(' - ')[1]}

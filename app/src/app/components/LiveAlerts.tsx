@@ -1,7 +1,11 @@
 import { AlertTriangle, Clock } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useState, useEffect } from 'react';
+import { ageSeconds } from '../hooks/useSensorData';
 import type { SensorReading } from '../hooks/useSensorData';
+
+// Only events from the last few minutes are shown. Older log entries are history, not alerts.
+const RECENT_S = 300;
 
 interface Alert {
   id: number;
@@ -14,7 +18,7 @@ interface Alert {
 interface MissionEntry {
   time: string;
   people: number;
-  damage: { type: string; confidence: number }[];
+  damage: { type?: string; confidence: number }[];
   spills: { type: string; confidence: number }[];
 }
 
@@ -29,7 +33,7 @@ interface Props {
   sensor: SensorReading;
 }
 
-export default function LiveAlerts({ sensor }: Props) {
+export default function LiveAlerts(_props: Props) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
@@ -41,80 +45,55 @@ export default function LiveAlerts({ sensor }: Props) {
   useEffect(() => {
     const build = async () => {
       try {
-        const [mRes, aRes] = await Promise.all([
-          fetch('/mission_log.json').then(r => r.json()).catch(() => []),
-          fetch('/audio_log.json').then(r => r.json()).catch(() => []),
+        const [mRes, aRes, fRes] = await Promise.all([
+          fetch('/mission_log.json', { cache: 'no-store' }).then(r => r.json()).catch(() => []),
+          fetch('/audio_log.json', { cache: 'no-store' }).then(r => r.json()).catch(() => []),
+          fetch('/fusion_log.json', { cache: 'no-store' }).then(r => r.json()).catch(() => null),
         ]);
 
         const built: Alert[] = [];
         let id = 1;
         const now = new Date().toLocaleTimeString('en-US', { hour12: false });
+        const recent = (ts?: string) => ageSeconds(ts) <= RECENT_S;
 
-        // ── Sensor-derived alerts (prepended — most urgent first) ──────────────
-        if (sensor.mq2 >= 40) {
-          built.unshift({ id: id++, time: now, type: `EXPLOSIVE GAS — MQ2 ${sensor.mq2.toFixed(1)}% — EVACUATE`, location: 'Sensor', severity: 'critical' });
-        } else if (sensor.mq2 > 20) {
-          built.unshift({ id: id++, time: now, type: `MQ2 Flammable Gas ${sensor.mq2.toFixed(1)}%`, location: 'Sensor', severity: 'high' });
+        // ── Fusion threats (most urgent first) ─────────────────────────────────
+        const threats: { label: string; severity: string; confidence: number }[] =
+          fRes && ageSeconds(fRes.timestamp) <= 15 ? (fRes.threats ?? []) : [];
+        for (const t of threats) {
+          const sev: Alert['severity'] =
+            t.severity === 'CRITICAL' ? 'critical' : t.severity === 'HIGH' ? 'high' :
+            t.severity === 'MEDIUM' ? 'medium' : 'low';
+          built.push({ id: id++, time: now, type: `${t.label} (${(t.confidence * 100).toFixed(0)}%)`, location: 'Fusion engine', severity: sev });
         }
 
-        if (sensor.water_detected) {
-          built.unshift({ id: id++, time: now, type: 'Water Intrusion Detected', location: 'Water Sensor', severity: 'high' });
-        }
-
-        if (sensor.mq135 > 30) {
-          built.unshift({ id: id++, time: now, type: `SO2/Air Toxicity ${sensor.mq135.toFixed(1)}%`, location: 'MQ135 Sensor', severity: 'high' });
-        } else if (sensor.air_toxicity > 30 && sensor.mq135 <= 30) {
-          built.unshift({ id: id++, time: now, type: `Air Toxicity ${sensor.air_toxicity.toFixed(1)}%`, location: 'Sensor', severity: 'high' });
-        }
-
-        if (sensor.temperature > 35) {
-          built.unshift({ id: id++, time: now, type: `High Temp ${sensor.temperature.toFixed(1)}°C`, location: 'Sensor', severity: 'medium' });
-        }
-
-        const maxTilt = Math.max(Math.abs(sensor.roll), Math.abs(sensor.pitch));
-        if (maxTilt > 30) {
-          built.unshift({ id: id++, time: now, type: `Severe Tilt ${maxTilt.toFixed(1)}° — Structural Risk`, location: 'MPU Gyro', severity: 'high' });
-        } else if (maxTilt > 15) {
-          built.unshift({ id: id++, time: now, type: `Tilt Detected ${maxTilt.toFixed(1)}°`, location: 'MPU Gyro', severity: 'medium' });
-        }
-
-        // ── Mission log (last 10 entries) ──────────────────────────────────────
-        const mission: MissionEntry[] = mRes.slice(-10).reverse();
+        // ── Camera detections from the last few minutes ────────────────────────
+        const mission: MissionEntry[] = (Array.isArray(mRes) ? mRes : []).filter((e: MissionEntry) => recent(e.time)).slice(-10).reverse();
+        const seen = new Set<string>();
         for (const entry of mission) {
           const t = entry.time?.split(' ')[1] ?? '--:--:--';
-          if (entry.people > 0) {
-            built.push({ id: id++, time: t, type: `${entry.people} Person(s) Detected`, location: 'Camera Feed', severity: 'high' });
-          }
-          for (const d of entry.damage ?? []) {
-            built.push({ id: id++, time: t, type: `Structural Damage (${(d.confidence * 100).toFixed(0)}%)`, location: 'Zone A', severity: 'high' });
-          }
-          for (const s of entry.spills ?? []) {
-            built.push({ id: id++, time: t, type: `Spill Detected (${(s.confidence * 100).toFixed(0)}%)`, location: 'Zone A', severity: 'medium' });
-          }
+          const add = (key: string, type: string, severity: Alert['severity']) => {
+            if (seen.has(key)) return;            // newest entry of each kind only
+            seen.add(key);
+            built.push({ id: id++, time: t, type, location: 'Camera', severity });
+          };
+          if (entry.people > 0) add('people', `${entry.people} Person(s) in View`, 'medium');
+          for (const d of entry.damage ?? []) add('damage', `Structural Damage ${d.type ?? ''} (${(d.confidence * 100).toFixed(0)}%)`, 'high');
+          for (const s of entry.spills ?? []) add('spill', `Spill Detected (${(s.confidence * 100).toFixed(0)}%)`, 'medium');
         }
 
-        // ── Audio log (last 5 entries) ─────────────────────────────────────────
-        const audio: AudioEntry[] = aRes.slice(-5).reverse();
+        // ── Sounds from the last few minutes ───────────────────────────────────
+        const audio: AudioEntry[] = (Array.isArray(aRes) ? aRes : []).filter((e: AudioEntry) => recent(e.time)).slice(-5).reverse();
         for (const entry of audio) {
+          if (seen.has(`a:${entry.specific}`)) continue;
+          seen.add(`a:${entry.specific}`);
           const t = entry.time?.split(' ')[1] ?? '--:--:--';
           const sev: Alert['severity'] =
             ['Fire', 'Explosion/Collapse', 'Gas Leak'].includes(entry.category) ? 'high' :
             entry.category === 'Human' ? 'medium' : 'low';
-          built.push({ id: id++, time: t, type: `Audio: ${entry.specific} (${(entry.confidence * 100).toFixed(0)}%)`, location: 'Mic', severity: sev });
+          built.push({ id: id++, time: t, type: `Audio: ${entry.specific} (${(entry.confidence * 100).toFixed(0)}%)`, location: 'Microphone', severity: sev });
         }
 
-        // Fallback placeholder alerts
-        if (built.length === 0) {
-          setAlerts([
-            { id: 1, time: '09:15:32', type: 'Gas Leak Detected',  location: 'Zone A-12', severity: 'high'   },
-            { id: 2, time: '08:42:18', type: 'Rubble Detected',     location: 'Zone B-7',  severity: 'medium' },
-            { id: 3, time: '07:30:45', type: 'Human Presence',      location: 'Zone C-3',  severity: 'low'    },
-            { id: 4, time: '07:15:22', type: 'Oil Spill Detected',  location: 'Zone A-5',  severity: 'high'   },
-            { id: 5, time: '06:58:10', type: 'Temperature Spike',   location: 'Zone D-1',  severity: 'medium' },
-          ]);
-        } else {
-          setAlerts(built.slice(0, 5));
-        }
+        setAlerts(built.slice(0, 5));
       } catch {
         // keep existing alerts
       }
@@ -123,7 +102,7 @@ export default function LiveAlerts({ sensor }: Props) {
     build();
     const id = setInterval(build, 4000);
     return () => clearInterval(id);
-  }, [sensor]);
+  }, []);
 
   const sevColor = (s: string) =>
     s === 'critical' ? 'text-red-300' :
@@ -169,7 +148,13 @@ export default function LiveAlerts({ sensor }: Props) {
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-3">
+      {alerts.length === 0 && (
+        <div className="py-6 text-center text-sm text-gray-600">
+          No alerts in the last 5 minutes
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
         {alerts.map((alert, index) => (
           <motion.div key={alert.id}
             initial={{ opacity: 0, y: 10 }}
@@ -183,7 +168,7 @@ export default function LiveAlerts({ sensor }: Props) {
                 style={{ boxShadow: `0 0 8px ${sevGlow(alert.severity)}` }}
               />
               <div className="flex-1 min-w-0">
-                <div className={`text-sm font-medium ${sevColor(alert.severity)} truncate`}>
+                <div className={`text-sm font-medium ${sevColor(alert.severity)}`}>
                   {alert.type}
                 </div>
               </div>

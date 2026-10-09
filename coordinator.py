@@ -1,41 +1,45 @@
 """
-AEGIS System Coordinator
-========================
-Single process that runs all three detection engines in lockstep on the same
-sensor reading, writes outputs in correct dependency order, and auto-fires SMS
-when a zone escalates to CRITICAL or CATASTROPHIC.
+VERDE Coordinator
+=================
+The one process that turns live inputs into the dashboard's data:
 
-Replaces running three separate terminals:
-  Before: python anomaly_detector.py
-          python fusion_engine.py
-          python ehs_calculator.py
+    sensor board ─┐
+    detect.py  ───┼─▶ fusion engine ─▶ fusion_log.json      (model: fusion_model.json)
+    audio_detect ─┘        │
+                           ├─▶ sensor_log.json   (readings, gas as % rise over clean air)
+                           ├─▶ anomaly detector ─▶ anomaly_log.json
+                           ├─▶ health score     ─▶ ehs_log.json
+                           └─▶ WhatsApp alerts via CallMeBot (optional)
 
-  After:  python coordinator.py
+Live by default. If the sensor board, camera or microphone is not delivering
+data, that source is shown as offline; nothing is simulated unless you ask.
 
 Usage:
-  python coordinator.py                         # simulate, no alerts
-  python coordinator.py --alerts                # arm auto-SMS on escalation
-  python coordinator.py --interval 2            # tick every 2s (default 1)
-  python coordinator.py --scenario-interval 30  # scenario cycle in seconds
-  python coordinator.py --zone "Zone B-7"
+  python coordinator.py                              # live
+  python coordinator.py --sensor-ip 192.168.1.50     # board at another address
+  python coordinator.py --alerts                     # arm WhatsApp alerts on CRITICAL / CATASTROPHIC
+  python coordinator.py --test-sms                   # send one test message and exit
+  python coordinator.py --mode sim                   # simulated sensors (labelled SIMULATED)
+
+Run detect.py and audio_detect.py alongside it for the camera and microphone.
 """
 
-import json, os, re, sys, time, argparse, urllib.request, urllib.error, urllib.parse
+import json, os, re, sys, time, argparse, threading, urllib.request, urllib.error, urllib.parse
 from pathlib import Path
 
 # ── Fix Windows console encoding so ANSI + Unicode print correctly ──────────
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-# ── Always resolve paths relative to AEGIS root ─────────────────────────────
+# ── Always resolve paths relative to the repo root ──────────────────────────
 ROOT = Path(__file__).parent
 os.chdir(ROOT)
 sys.path.insert(0, str(ROOT))
 
-# ── Import from existing engine modules ─────────────────────────────────────
-from anomaly_detector import SimulatedSensorInput, HttpSensorInput, AnomalyDetector, _write_sensor_log, SENSOR_IP
-from fusion_engine    import decide  as fusion_decide
-from ehs_calculator   import compute as ehs_compute
+from sensor_source    import BoardSensor, DEFAULT_SENSOR_IP, read_vision, read_audio, write_json
+from fusion_engine    import FusionEngine
+from anomaly_detector import AnomalyDetector, SimulatedSensorInput
+from ehs_calculator   import EHSCalculator
 
 
 # ── Contact list and alert routing ──────────────────────────────────────────
@@ -47,13 +51,13 @@ CONTACTS = [
         'name':    'Prithika',
         'phone':   '9108307690',
         'role':    'Fire Dept',
-        'threats': {'FIRE_RISK', 'COMPOUND_EMERGENCY'},
+        'threats': {'FIRE_RISK', 'SPILL_HAZARD', 'COMPOUND_EMERGENCY'},
     },
     {
         'name':    'Kovidh',
         'phone':   '9108307690',
         'role':    'EMS',
-        'threats': {'TOXIC_EXPOSURE', 'MASS_CASUALTY_RISK', 'COMPOUND_EMERGENCY'},
+        'threats': {'TOXIC_EXPOSURE', 'MASS_CASUALTY_RISK', 'SURVIVOR_SIGNAL', 'COMPOUND_EMERGENCY'},
     },
     {
         'name':    'Likitha',
@@ -65,7 +69,7 @@ CONTACTS = [
         'name':    'Barath',
         'phone':   '9108307690',
         'role':    'Control Room',
-        'threats': {'GAS_LEAK', 'STRUCTURAL_STRESS', 'COMPOUND_EMERGENCY'},
+        'threats': {'GAS_LEAK', 'STRUCTURAL_STRESS', 'FLOOD_RISK', 'COMPOUND_EMERGENCY'},
     },
 ]
 
@@ -124,16 +128,14 @@ def _location_text(reading: dict) -> str:
 
 
 def _build_sms(fusion: dict, contact: dict, reading: dict) -> str:
-    top = ', '.join(t['id'] for t in fusion['threats'][:3]) or 'NONE'
-    sc  = fusion['sensor_classes']
+    top = ', '.join(t['label'] for t in fusion['threats'][:3]) or 'none'
+    why = fusion['threats'][0]['description'] if fusion['threats'] else ''
     return (
         f"AEGIS ALERT -- {fusion['zone']}\n"
-        f"Status: {fusion['zone_status']} (Level {fusion['threat_level']})\n"
+        f"Status: {fusion['zone_status']} (Level {fusion['threat_level']}/4)\n"
         f"Threats: {top}\n"
+        f"{why}\n"
         f"Action: {fusion['action_label']}\n"
-        f"T={sc.get('temperature',{}).get('value',0):.1f}C "
-        f"MQ2={sc.get('mq2',{}).get('value',0):.1f}% "
-        f"Tox={sc.get('air_toxicity',{}).get('value',0):.1f}%\n"
         f"{_location_text(reading)}\n"
         f"-- VERDE Emergency Response System"
     )
@@ -219,6 +221,37 @@ class AlertManager:
         self.prev_level = level
 
 
+# ── Sensor board polling (background, so a dead board never stalls the loop) ─
+
+class BoardPoller(threading.Thread):
+    """Keeps the newest reading from the source. take() hands each one out once."""
+
+    def __init__(self, source, interval: float):
+        super().__init__(daemon=True)
+        self.source, self.interval = source, interval
+        self._lock = threading.Lock()
+        self._reading = None
+        self.ok = False
+
+    def run(self):
+        while True:
+            t0 = time.monotonic()
+            try:
+                reading = self.source.read()
+            except Exception:
+                reading = None
+            with self._lock:
+                self.ok = reading is not None
+                if reading is not None:
+                    self._reading = reading
+            time.sleep(max(0.05, self.interval - (time.monotonic() - t0)))
+
+    def take(self):
+        with self._lock:
+            reading, self._reading = self._reading, None
+            return reading
+
+
 # ── Terminal output ──────────────────────────────────────────────────────────
 
 _ZONE_COLOR = {
@@ -227,127 +260,133 @@ _ZONE_COLOR = {
     'WARNING':      '\033[93m',
     'CRITICAL':     '\033[91m',
     'CATASTROPHIC': '\033[95m',
+    'NO_DATA':      '\033[90m',
+    'UNTRAINED':    '\033[90m',
 }
 _R = '\033[0m'
 
-def _print_status(n: int, reading: dict, fusion: dict, ehs: dict, ms: float):
+
+def _print_status(n: int, fusion: dict, ehs: dict):
     zone = fusion['zone_status']
-    col  = _ZONE_COLOR.get(zone, '')
-    top  = fusion['threats'][0]['id'] if fusion['threats'] else '-'
-    ehs_score = ehs.get('score', 0)
-    ehs_grade = ehs.get('grade', '?')
-    print(
-        f"\r  [{reading['timestamp']}] #{n:04d} | "
-        f"{col}{zone:12}{_R} L{fusion['threat_level']} | "
-        f"{top:22} | "
-        f"EHS {ehs_score:5.1f}{ehs_grade} | "
-        f"T={reading.get('temperature', 0):5.1f} "
-        f"MQ2={reading.get('mq2', 0):5.1f} "
-        f"Tox={reading.get('air_toxicity', 0):5.1f} | "
-        f"{ms:.1f}ms",
-        end='', flush=True,
-    )
+    src  = fusion['sources']
+    flag = lambda k, name: (name if src[k]['live'] else name.lower() + ':off')
+    cal  = ' (calibrating gas)' if src['sensors']['calibrating'] else ''
+    top  = fusion['threats'][0]['label'] if fusion['threats'] else '-'
+    score = ehs.get('score')
+    ehs_s = f"{score:5.1f}{ehs.get('grade', '')}" if score is not None else '  n/a '
+    line = (f"  [{fusion['timestamp'][11:]}] #{n:05d} | "
+            f"{_ZONE_COLOR.get(zone, '')}{zone:12}{_R} | {top:22.22} | EHS {ehs_s} | "
+            f"{flag('sensors', 'BOARD')} {flag('camera', 'CAM')} {flag('audio', 'MIC')}{cal}")
+    print('\r' + line.ljust(118), end='', flush=True)
 
 
 # ── Main loop ────────────────────────────────────────────────────────────────
 
-def run(zone: str, interval: float, scenario_interval: int, alerts_enabled: bool, mode: str = 'sim'):
-    api_key   = _load_api_key()
-    if mode == 'http':
-        sim = HttpSensorInput()
+SENSOR_LOG_MAX = 100
+
+
+def run(zone: str, interval: float, mode: str, sensor_ip: str,
+        scenario_interval: int, alerts_enabled: bool, ticks: int = 0):
+    if mode == 'sim':
+        source = SimulatedSensorInput(scenario_interval=scenario_interval)
     else:
-        sim = SimulatedSensorInput(scenario_interval=scenario_interval)
-    detector  = AnomalyDetector()
-    alert_mgr = AlertManager(api_key, alerts_enabled)
+        source = BoardSensor(ip=sensor_ip)
+    origin = getattr(source, 'origin', 'board')
+
+    engine    = FusionEngine()
+    detector  = AnomalyDetector(fresh=True)
+    ehs_calc  = EHSCalculator()
+    alert_mgr = AlertManager(_load_api_key(), alerts_enabled)
+    poller    = BoardPoller(source, interval)
+    poller.start()
+
+    # Start from empty logs so nothing from an earlier run is shown as current
+    sensor_log: list = []
+    write_json('sensor_log.json', sensor_log)
 
     print()
-    print('=' * 72)
-    print('  AEGIS COORDINATOR  --  VERDE Emergency Response Platform')
-    print('=' * 72)
-    print(f'  Zone              : {zone}')
-    print(f'  Mode              : {"HTTP — board at " + SENSOR_IP if mode == "http" else "simulation"}')
-    print(f'  Tick interval     : {interval}s')
-    print(f'  Scenario cycle    : {scenario_interval}s (sim only)')
-    print(f'  Engines active    : Anomaly Detector | Sensor Fusion | EHS Calculator')
-    print(f'  Dashboard outputs : sensor_log.json | anomaly_log.json | '
-          f'fusion_log.json | ehs_log.json')
-    print('=' * 72)
+    print('=' * 78)
+    print('  VERDE COORDINATOR')
+    print('=' * 78)
+    print(f'  Zone     : {zone}')
+    if mode == 'sim':
+        print('  Sensors  : SIMULATED  (not real data — dashboard is labelled accordingly)')
+    else:
+        print(f'  Sensors  : board at http://{sensor_ip}')
+        print('             gas sensors calibrate to clean air for the first 30 readings')
+    trained = (engine.model or {}).get('hazards', {})
+    if trained:
+        print(f"  Model    : fusion_model.json, trained {engine.model.get('trained_at')}")
+        for key, m in trained.items():
+            h = m['held_out']
+            print(f"             {m['name']:<22} precision {h['precision']:.2f}  recall {h['recall']:.2f}"
+                  f"  ({m['data']['trials']} trials)")
+        for key, why in (engine.model or {}).get('not_trained', {}).items():
+            print(f"             {key:<22} not trained — {why}")
+    else:
+        print('  Model    : NONE — no hazard will be reported until you record trials')
+        print('             (record_trials.py) and run train_fusion.py')
+    print('  Camera   : from detect.py        (detection_state.json)')
+    print('  Audio    : from audio_detect.py  (audio_state.json, audio_log.json)')
+    print('  Outputs  : sensor_log.json | fusion_log.json | anomaly_log.json | ehs_log.json')
+    print('=' * 78)
     print()
-    print('  Timestamp               Tick   Zone          L  Top Threat             '
-          '        EHS     T      MQ2   Tox    ms')
-    print('  ' + '-' * 110)
 
     n = 0
     while True:
         t0 = time.monotonic()
         try:
-            reading = sim.read()
             n += 1
+            reading = poller.take()
+            fusion  = engine.decide(reading, read_vision(), read_audio(), zone=zone, origin=origin)
 
-            # ── Pipeline (order matters — each step depends on the previous) ──
+            # Sensor log and anomaly detection only advance on a real new reading
+            if reading is not None and engine.published is not None:
+                sensor_log = (sensor_log + [engine.published])[-SENSOR_LOG_MAX:]
+                write_json('sensor_log.json', sensor_log)
+                for a in detector.process(engine.published):
+                    print(f"\n  [{a['severity']:8}] [{a['method']:11}] {a['sensor']:11} {a['detail'][:90]}")
 
-            # 1. Sensor log first — ehs_compute reads it from disk
-            _write_sensor_log(reading)
+            write_json('fusion_log.json', fusion)
+            ehs = ehs_calc.compute(zone, fusion)
+            alert_mgr.check(fusion, engine.published or {})
+            _print_status(n, fusion, ehs)
 
-            # 2. Anomaly detection — writes anomaly_log.json (ehs reads this too)
-            detector.process(reading)
-
-            # 3. Sensor fusion — direct call, no disk round-trip needed
-            fusion = fusion_decide(reading, zone)
-
-            # 4. Persist fusion result for dashboard
-            (ROOT / 'fusion_log.json').write_text(
-                json.dumps(fusion, indent=2), encoding='utf-8'
-            )
-
-            # 5. EHS — reads all four logs from disk, writes ehs_log.json
-            ehs = ehs_compute(zone)
-
-            # 6. Auto-alert check
-            alert_mgr.check(fusion, reading)
-
-            # 7. Status line
-            ms = (time.monotonic() - t0) * 1000
-            _print_status(n, reading, fusion, ehs, ms)
-
-            # Sleep for the remainder of the tick interval
-            elapsed = time.monotonic() - t0
-            time.sleep(max(0.0, interval - elapsed))
+            if ticks and n >= ticks:
+                print()
+                return
+            time.sleep(max(0.0, interval - (time.monotonic() - t0)))
 
         except KeyboardInterrupt:
-            print(f'\n\n  Coordinator stopped after {n} ticks.')
-            print(f'  Anomalies logged : {len(detector.anomaly_log)}')
+            print(f'\n\n  Coordinator stopped after {n} ticks, '
+                  f'{len(detector.anomaly_log)} anomalies logged.')
             break
         except Exception as e:
-            print(f'\n  [ERR] tick {n}: {e}')
+            print(f'\n  [ERR] tick {n}: {type(e).__name__}: {e}')
             time.sleep(interval)
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser(description='AEGIS System Coordinator')
-    ap.add_argument('--zone',              default='Zone A-12',
-                    help='Zone identifier shown in all outputs')
-    ap.add_argument('--interval',          type=float, default=1.0,
-                    help='Seconds between sensor ticks (default 1)')
-    ap.add_argument('--scenario-interval', type=int,   default=60,
-                    help='Seconds per simulation scenario (default 60)')
-    ap.add_argument('--alerts',            action='store_true',
-                    help='Arm auto-SMS when zone hits CRITICAL or CATASTROPHIC')
-    ap.add_argument('--mode',              choices=['sim', 'http'], default='sim',
-                    help='"sim" = simulation (default), "http" = live board at 10.161.238.74')
-    ap.add_argument('--test-sms',          action='store_true',
-                    help='Send one test SMS to the contact number(s) and exit')
+    ap = argparse.ArgumentParser(description='VERDE Coordinator')
+    ap.add_argument('--zone',      default='Zone A-12', help='Zone name shown in all outputs')
+    ap.add_argument('--interval',  type=float, default=1.0, help='Seconds between ticks (default 1)')
+    ap.add_argument('--mode',      choices=['live', 'sim'], default='live',
+                    help='"live" = real sensor board (default); "sim" = simulated sensors')
+    ap.add_argument('--sensor-ip', default=DEFAULT_SENSOR_IP,
+                    help=f'Sensor board address (default {DEFAULT_SENSOR_IP}, or env VERDE_SENSOR_IP)')
+    ap.add_argument('--scenario-interval', type=int, default=60,
+                    help='Seconds per scenario in sim mode (default 60)')
+    ap.add_argument('--alerts',    action='store_true',
+                    help='Arm auto-SMS when the zone reaches CRITICAL or CATASTROPHIC')
+    ap.add_argument('--test-sms',  action='store_true',
+                    help='Send one test WhatsApp message to the contact number(s) and exit')
+    ap.add_argument('--ticks',     type=int, default=0, help=argparse.SUPPRESS)
     args = ap.parse_args()
 
     if args.test_sms:
         sys.exit(send_test_sms())
 
-    run(
-        zone=args.zone,
-        interval=args.interval,
-        scenario_interval=args.scenario_interval,
-        alerts_enabled=args.alerts,
-        mode=args.mode,
-    )
+    run(zone=args.zone, interval=args.interval, mode=args.mode, sensor_ip=args.sensor_ip,
+        scenario_interval=args.scenario_interval, alerts_enabled=args.alerts, ticks=args.ticks)

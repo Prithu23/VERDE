@@ -36,6 +36,7 @@ const SENSOR_LABEL: Record<string, string> = {
   pressure:    'Pressure',
   mq2:         'MQ2 Gas',
   mq4:         'MQ4 Gas',
+  mq135:       'MQ135 Air',
   air_toxicity:'Air Tox',
   event_rate:  'Events',
   multi:       'Multi',

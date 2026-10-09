@@ -1,551 +1,378 @@
 """
-AEGIS Sensor Fusion Decision Engine (SFDE)
-==========================================
-Translates raw sensor readings into classified threat assessments using
-domain-knowledge rules — no ML required.
+VERDE Sensor Fusion Engine
+==========================
+Decides which hazards are present from the live sensor board, camera and
+microphone, using a model fitted to trials recorded on this rover.
 
-The pipeline:
-  1. classify_all()         — per-sensor status (NORMAL/CAUTION/ELEVATED/WARNING/CRITICAL)
-  2. detect_threats()       — compound multi-sensor rules → active threat list
-  3. aggregate_zone_status()— overall zone status (CLEAR → CATASTROPHIC)
-  4. recommend_action()     — actionable response instruction
+Where every number comes from
+-----------------------------
+  measurements        features.py          (what the sensors, camera and mic report)
+  weights, thresholds fusion_model.json    (fitted by train_fusion.py from your trials)
+  response levels     response_policy.json (your team's decision, not learned)
 
-Usage:
-  python fusion_engine.py               # continuous mode (default interval: 1s)
-  python fusion_engine.py --interval 2  # poll every 2 seconds
-  python fusion_engine.py --once        # single pass, print JSON, exit
-  python fusion_engine.py --test        # run built-in scenario tests
+There are no hand-set hazard weights or thresholds in this file. For each
+trained hazard the engine evaluates
+
+    p = sigmoid( intercept + Σ coef_i × (x_i − mean_i) / scale_i )
+
+and reports the hazard when p reaches the threshold that scored best on
+held-out trials.
+
+What it will not do
+-------------------
+  * no model file              → status UNTRAINED, no verdict
+  * hazard never recorded      → listed as not trained, never reported
+  * a needed source is offline → that hazard is "cannot evaluate", not "clear"
+  * nothing live               → status NO_DATA
+
+Run `python fusion_engine.py --test` for the engine tests.
 """
 
-import json, math, time, argparse
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import time
 from datetime import datetime
 from pathlib import Path
 
+from features import FeatureExtractor, GAS_SENSORS, SOURCE_OF
+from sensor_source import TS_FMT
+
 ROOT = Path(__file__).parent
-
-
-# ─── Status Levels ─────────────────────────────────────────────────────────────
-
-LEVELS   = ['NORMAL', 'CAUTION', 'ELEVATED', 'WARNING', 'CRITICAL']
-RANK     = {s: i for i, s in enumerate(LEVELS)}
-
-SEV_LVLS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
-SEV_RANK = {s: i for i, s in enumerate(SEV_LVLS)}
+MODEL_PATH = ROOT / "fusion_model.json"
+POLICY_PATH = ROOT / "response_policy.json"
 
 ZONE_STATUS = ['CLEAR', 'ELEVATED', 'WARNING', 'CRITICAL', 'CATASTROPHIC']
+ZONE_RANK = {z: i for i, z in enumerate(ZONE_STATUS)}
+# Dashboard colour for a threat card, from the zone level the policy gives it
+SEVERITY_OF_ZONE = {'ELEVATED': 'LOW', 'WARNING': 'MEDIUM', 'CRITICAL': 'HIGH', 'CATASTROPHIC': 'CRITICAL'}
 
+SOURCE_NAME = {'board': 'sensor board', 'camera': 'camera', 'audio': 'microphone'}
 
-# ─── Per-Sensor Rule Tables ─────────────────────────────────────────────────────
-# Each table: [(threshold, status, label), ...] sorted highest-threshold first.
-# _classify() iterates top-down; first entry where value > threshold wins.
-# The last entry uses -inf as a guaranteed catch-all.
 
-TEMP_RULES = [
-    ( 55,       'CRITICAL', 'Extreme Heat — Danger to Life'),
-    ( 45,       'WARNING',  'High Heat — Fire Risk Zone'),
-    ( 38,       'ELEVATED', 'Above Normal — Monitor Closely'),
-    ( 20,       'NORMAL',   'Within Safe Range'),
-    ( 10,       'CAUTION',  'Cool — Monitor Exposure'),
-    (  0,       'ELEVATED', 'Cold — Exposure Risk'),
-    (-math.inf, 'WARNING',  'Extreme Cold — Hypothermia Risk'),
-]
+def load_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return None
 
-HUM_RULES = [
-    ( 90,       'WARNING',  'Saturated — Slip & Structural Risk'),
-    ( 80,       'ELEVATED', 'High Humidity'),
-    ( 30,       'NORMAL',   'Within Safe Range'),
-    ( 20,       'CAUTION',  'Low Humidity — Fire Risk'),
-    ( 10,       'WARNING',  'Very Dry — High Combustion Risk'),
-    (-math.inf, 'CRITICAL', 'Extremely Dry — Immediate Fire Risk'),
-]
 
-PRESS_RULES = [
-    (1040,      'CAUTION',  'High Pressure — Monitor'),
-    ( 990,      'NORMAL',   'Normal Range'),
-    ( 975,      'CAUTION',  'Low — Possible Structural Event'),
-    ( 960,      'WARNING',  'Very Low — Structural Stress'),
-    (-math.inf, 'CRITICAL', 'Extreme Low — Structural Failure Risk'),
-]
-
-MQ2_RULES = [
-    ( 40,       'CRITICAL', 'Explosive Gas — Evacuate Immediately'),
-    ( 25,       'WARNING',  'Combustible Gas — High Concentration'),
-    ( 15,       'ELEVATED', 'Gas Trace Detected'),
-    (  8,       'CAUTION',  'Low Gas Trace — Monitor'),
-    (-math.inf, 'NORMAL',   'No Gas Detected'),
-]
-
-MQ4_RULES = [
-    ( 30,       'CRITICAL', 'High Methane — Explosive Risk'),
-    ( 20,       'WARNING',  'Methane Elevated — Ventilate'),
-    ( 12,       'ELEVATED', 'Methane Trace Detected'),
-    (  6,       'CAUTION',  'Low Methane Trace'),
-    (-math.inf, 'NORMAL',   'No Methane Detected'),
-]
-
-TOXIC_RULES = [
-    ( 60,       'CRITICAL', 'Lethal Toxicity — Immediate Evacuation'),
-    ( 40,       'WARNING',  'Dangerous — PPE Required'),
-    ( 25,       'ELEVATED', 'Elevated Toxins — Monitor Closely'),
-    ( 15,       'CAUTION',  'Mild Toxin Trace'),
-    (-math.inf, 'NORMAL',   'Within Safe Limits'),
-]
-
-MQ135_RULES = [
-    ( 60,       'CRITICAL', 'Lethal SO2/Air Toxicity — Immediate Evacuation'),
-    ( 40,       'WARNING',  'Dangerous Air Quality — PPE Required'),
-    ( 25,       'ELEVATED', 'Elevated SO2/Toxins — Monitor Closely'),
-    ( 15,       'CAUTION',  'Mild SO2 Trace'),
-    (-math.inf, 'NORMAL',   'Air Quality Within Safe Limits'),
-]
-
-WATER_RULES = [
-    (  0.5,     'WARNING',  'Water Intrusion — Flood/Electrical Risk'),
-    (-math.inf, 'NORMAL',   'No Water Detected'),
-]
-
-TILT_RULES = [
-    ( 30,       'WARNING',  'Severe Tilt — Structural Instability'),
-    ( 15,       'ELEVATED', 'Significant Tilt — Monitor Structure'),
-    (  5,       'CAUTION',  'Slight Tilt Detected'),
-    (-math.inf, 'NORMAL',   'Level — Stable'),
-]
-
-PEOPLE_RULES = [
-    (  8,       'CRITICAL', 'Mass Gathering in Hazard Zone'),
-    (  5,       'WARNING',  'Multiple Persons at Risk'),
-    (  2,       'ELEVATED', 'Personnel Present in Zone'),
-    (  0,       'CAUTION',  'Individual Present — Monitor'),
-    (-math.inf, 'NORMAL',   'Zone Clear'),
-]
-
-EVRATE_RULES = [
-    (  5.0,     'CRITICAL', 'Extreme Event Surge'),
-    (  3.0,     'WARNING',  'High Anomaly Rate'),
-    (  1.5,     'ELEVATED', 'Elevated Activity'),
-    (  0.5,     'CAUTION',  'Slight Elevated Activity'),
-    (-math.inf, 'NORMAL',   'Baseline Activity'),
-]
-
-CLASSIFIERS = {
-    'temperature':     TEMP_RULES,
-    'humidity':        HUM_RULES,
-    'pressure':        PRESS_RULES,
-    'mq2':             MQ2_RULES,
-    'mq4':             MQ4_RULES,
-    'mq135':           MQ135_RULES,
-    'air_toxicity':    TOXIC_RULES,
-    'people_detected': PEOPLE_RULES,
-    'event_rate':      EVRATE_RULES,
-}
-
-
-# ─── Per-Sensor Classification ─────────────────────────────────────────────────
-
-def _classify(rules: list, value: float) -> tuple:
-    for threshold, status, label in rules:
-        if value > threshold:
-            return status, label
-    return rules[-1][1], rules[-1][2]  # guaranteed by -inf sentinel
-
-
-def classify_all(reading: dict) -> dict:
-    """Return sensor_classes: {sensor → {value, status, label, rank}}."""
-    result = {}
-    for sensor, rules in CLASSIFIERS.items():
-        val = float(reading.get(sensor, 0))
-        status, label = _classify(rules, val)
-        result[sensor] = {'value': val, 'status': status, 'label': label, 'rank': RANK[status]}
-
-    # Water sensor (boolean → 0/1 float)
-    water_val = 1.0 if reading.get('water_detected') else 0.0
-    w_status, w_label = _classify(WATER_RULES, water_val)
-    result['water_detected'] = {'value': water_val, 'status': w_status, 'label': w_label, 'rank': RANK[w_status]}
-
-    # Tilt (max of |roll|, |pitch| in degrees)
-    tilt_val = max(abs(float(reading.get('roll', 0))), abs(float(reading.get('pitch', 0))))
-    t_status, t_label = _classify(TILT_RULES, tilt_val)
-    result['tilt'] = {'value': round(tilt_val, 1), 'status': t_status, 'label': t_label, 'rank': RANK[t_status]}
-
-    return result
-
-
-# ─── Helpers for Threat Detection ──────────────────────────────────────────────
-
-def _r(sc: dict, sensor: str) -> int:
-    """Rank of a classified sensor (0-4)."""
-    return sc.get(sensor, {}).get('rank', 0)
-
-def _v(reading: dict, sensor: str) -> float:
-    return float(reading.get(sensor, 0))
-
-
-# ─── Compound Threat Detection ─────────────────────────────────────────────────
-
-def detect_threats(reading: dict, sc: dict) -> tuple:
-    """
-    Apply multi-sensor compound rules to identify threat scenarios.
-    Evidence weights accumulate; corroboration from multiple sensors
-    boosts confidence. Threats below 0.20 confidence are suppressed.
-
-    Returns (threats: list, decision_log: list[str])
-    """
-    threats = []
-    log     = []
-
-    temp  = _v(reading, 'temperature')
-    hum   = _v(reading, 'humidity')
-    mq2   = _v(reading, 'mq2')
-    mq4   = _v(reading, 'mq4')
-    tox   = max(_v(reading, 'mq135'), _v(reading, 'air_toxicity'))
-    ppl   = _v(reading, 'people_detected')
-    evr   = _v(reading, 'event_rate')
-    press = _v(reading, 'pressure')
-
-    # ── FIRE RISK ──────────────────────────────────────────────────────────────
-    fe, fc = 0.0, []
-    if   temp > 55: fe += 0.90; fc.append('temperature'); log.append(f"Temp {temp:.1f}°C > 55 — critical heat (+0.90)")
-    elif temp > 45: fe += 0.65; fc.append('temperature'); log.append(f"Temp {temp:.1f}°C > 45 — fire zone (+0.65)")
-    elif temp > 38: fe += 0.30; fc.append('temperature'); log.append(f"Temp {temp:.1f}°C > 38 — elevated (+0.30)")
-
-    if   mq2 > 35: fe += 0.55; fc.append('mq2'); log.append(f"MQ2 {mq2:.1f}% > 35 — explosive gas (+0.55)")
-    elif mq2 > 20: fe += 0.35; fc.append('mq2'); log.append(f"MQ2 {mq2:.1f}% > 20 — combustible gas (+0.35)")
-    elif mq2 > 12: fe += 0.15; fc.append('mq2'); log.append(f"MQ2 {mq2:.1f}% > 12 — gas trace (+0.15)")
-
-    if   hum < 20: fe += 0.35; fc.append('humidity'); log.append(f"Humidity {hum:.1f}% < 20 — extreme dryness (+0.35)")
-    elif hum < 30: fe += 0.20; fc.append('humidity'); log.append(f"Humidity {hum:.1f}% < 30 — low humidity (+0.20)")
-
-    if len(set(fc)) >= 3:
-        fe = min(fe * 1.15, 1.0)
-        log.append(f"Multi-sensor corroboration ({len(set(fc))} sensors) → confidence boosted")
-
-    fe = min(fe, 1.0)
-    if fe >= 0.25:
-        sev = 'CRITICAL' if fe >= 0.85 else 'HIGH' if fe >= 0.55 else 'MEDIUM' if fe >= 0.35 else 'LOW'
-        desc_parts = []
-        if temp > 38: desc_parts.append(f"temp {temp:.1f}°C")
-        if mq2  > 12: desc_parts.append(f"MQ2 gas {mq2:.1f}%")
-        if hum  < 30: desc_parts.append(f"low humidity {hum:.1f}%")
-        threats.append({'id': 'FIRE_RISK', 'label': 'Fire Risk', 'severity': sev,
-                         'confidence': round(fe, 3), 'contributing': list(set(fc)),
-                         'description': 'Fire risk conditions: ' + ', '.join(desc_parts) + '.' if desc_parts else 'Elevated fire risk.'})
-
-    # ── GAS LEAK ───────────────────────────────────────────────────────────────
-    ge, gc = 0.0, []
-    if   mq2 > 40: ge += 0.95; gc.append('mq2'); log.append(f"MQ2 {mq2:.1f}% > 40 — explosive (+0.95)")
-    elif mq2 > 25: ge += 0.75; gc.append('mq2'); log.append(f"MQ2 {mq2:.1f}% > 25 — dangerous (+0.75)")
-    elif mq2 > 15: ge += 0.45; gc.append('mq2'); log.append(f"MQ2 {mq2:.1f}% > 15 — significant trace (+0.45)")
-    elif mq2 >  8: ge += 0.20; gc.append('mq2'); log.append(f"MQ2 {mq2:.1f}% > 8 — low trace (+0.20)")
-
-    if   mq4 > 30: ge += 0.90; gc.append('mq4'); log.append(f"MQ4 {mq4:.1f}% > 30 — explosive methane (+0.90)")
-    elif mq4 > 20: ge += 0.65; gc.append('mq4'); log.append(f"MQ4 {mq4:.1f}% > 20 — high methane (+0.65)")
-    elif mq4 > 12: ge += 0.35; gc.append('mq4'); log.append(f"MQ4 {mq4:.1f}% > 12 — methane trace (+0.35)")
-    elif mq4 >  6: ge += 0.15; gc.append('mq4'); log.append(f"MQ4 {mq4:.1f}% > 6 — low methane (+0.15)")
-
-    if tox > 25 and ge > 0.2:
-        ge += 0.20; gc.append('air_toxicity')
-        log.append(f"Toxicity {tox:.1f}% corroborates gas leak (+0.20)")
-
-    ge = min(ge, 1.0)
-    if ge >= 0.20:
-        sev = 'CRITICAL' if ge >= 0.85 else 'HIGH' if ge >= 0.55 else 'MEDIUM' if ge >= 0.30 else 'LOW'
-        gas_parts = []
-        if mq2 > 8:  gas_parts.append(f"MQ2 {mq2:.1f}% (LPG/smoke)")
-        if mq4 > 6:  gas_parts.append(f"MQ4 {mq4:.1f}% (methane)")
-        threats.append({'id': 'GAS_LEAK', 'label': 'Gas Leak', 'severity': sev,
-                         'confidence': round(ge, 3), 'contributing': list(set(gc)),
-                         'description': 'Gas leak indicators: ' + ', '.join(gas_parts) + '.' if gas_parts else 'Gas detected.'})
-
-    # ── TOXIC EXPOSURE ─────────────────────────────────────────────────────────
-    te, tc = 0.0, []
-    if   tox > 60: te += 0.95; tc.append('air_toxicity'); log.append(f"Toxicity {tox:.1f}% > 60 — lethal (+0.95)")
-    elif tox > 40: te += 0.75; tc.append('air_toxicity'); log.append(f"Toxicity {tox:.1f}% > 40 — dangerous (+0.75)")
-    elif tox > 25: te += 0.45; tc.append('air_toxicity'); log.append(f"Toxicity {tox:.1f}% > 25 — elevated (+0.45)")
-    elif tox > 15: te += 0.20; tc.append('air_toxicity'); log.append(f"Toxicity {tox:.1f}% > 15 — mild trace (+0.20)")
-
-    if ppl > 0 and te >= 0.20:
-        boost = 0.15 * min(ppl / 5, 1.0)
-        te += boost; tc.append('people_detected')
-        log.append(f"{int(ppl)} person(s) in toxic zone — exposure amplified (+{boost:.2f})")
-
-    te = min(te, 1.0)
-    if te >= 0.20:
-        sev = 'CRITICAL' if te >= 0.85 else 'HIGH' if te >= 0.55 else 'MEDIUM' if te >= 0.30 else 'LOW'
-        desc = f"Air toxicity at {tox:.1f}%"
-        if ppl > 0: desc += f" with {int(ppl)} person(s) exposed"
-        threats.append({'id': 'TOXIC_EXPOSURE', 'label': 'Toxic Exposure', 'severity': sev,
-                         'confidence': round(te, 3), 'contributing': list(set(tc)),
-                         'description': desc + '.'})
-
-    # ── MASS CASUALTY RISK ─────────────────────────────────────────────────────
-    if ppl > 0:
-        hazard_rank = max(_r(sc, s) for s in ['temperature', 'mq2', 'mq4', 'air_toxicity'])
-        if hazard_rank >= RANK['ELEVATED']:
-            ce = min(ppl / 8, 1.0) * 0.70 + (hazard_rank / 4) * 0.30
-            ce = min(ce, 1.0)
-            if ce >= 0.25:
-                sev = ('CRITICAL' if ppl > 5 and hazard_rank >= RANK['WARNING'] else
-                       'HIGH'     if ppl > 2  or hazard_rank >= RANK['WARNING'] else 'MEDIUM')
-                contrib = ['people_detected'] + [s for s in ['temperature', 'mq2', 'mq4', 'air_toxicity']
-                                                  if _r(sc, s) >= RANK['ELEVATED']]
-                threats.append({'id': 'MASS_CASUALTY_RISK', 'label': 'Mass Casualty Risk', 'severity': sev,
-                                 'confidence': round(ce, 3), 'contributing': contrib,
-                                 'description': f"{int(ppl)} person(s) in hazard zone with {LEVELS[hazard_rank]} conditions."})
-                log.append(f"Mass casualty: {int(ppl)} people × hazard rank {hazard_rank} → {sev}")
-
-    # ── STRUCTURAL STRESS ──────────────────────────────────────────────────────
-    se, sc2 = 0.0, []
-    if   press < 960:  se += 0.80; sc2.append('pressure'); log.append(f"Pressure {press:.0f} hPa < 960 — critical structural stress (+0.80)")
-    elif press < 975:  se += 0.50; sc2.append('pressure'); log.append(f"Pressure {press:.0f} hPa < 975 — significant stress (+0.50)")
-    elif press < 990:  se += 0.25; sc2.append('pressure'); log.append(f"Pressure {press:.0f} hPa < 990 — low pressure (+0.25)")
-    elif press > 1040: se += 0.20; sc2.append('pressure'); log.append(f"Pressure {press:.0f} hPa > 1040 — high pressure (+0.20)")
-
-    if   evr > 3.0: se += 0.40; sc2.append('event_rate'); log.append(f"Event rate {evr:.2f} > 3.0 — high structural events (+0.40)")
-    elif evr > 1.5: se += 0.20; sc2.append('event_rate'); log.append(f"Event rate {evr:.2f} > 1.5 — elevated events (+0.20)")
-
-    se = min(se, 1.0)
-    if se >= 0.25:
-        sev = 'CRITICAL' if se >= 0.75 else 'HIGH' if se >= 0.50 else 'MEDIUM' if se >= 0.30 else 'LOW'
-        threats.append({'id': 'STRUCTURAL_STRESS', 'label': 'Structural Stress', 'severity': sev,
-                         'confidence': round(se, 3), 'contributing': list(set(sc2)),
-                         'description': f"Pressure {press:.0f} hPa, event rate {evr:.1f}/s — structural or seismic stress indicated."})
-
-    # ── WATER / FLOOD RISK ─────────────────────────────────────────────────────
-    if reading.get('water_detected'):
-        we, wc = 0.70, ['water_detected']
-        if tox > 15 or mq2 > 8 or mq4 > 6:
-            we = min(we + 0.15, 1.0)
-            wc += [s for s in ['air_toxicity', 'mq2', 'mq4'] if _v(reading, s) > 5]
-        if ppl > 0:
-            we = min(we + 0.10, 1.0)
-            wc.append('people_detected')
-        sev = 'CRITICAL' if we >= 0.85 else 'HIGH' if we >= 0.55 else 'MEDIUM'
-        desc = 'Water intrusion detected'
-        if ppl > 0:
-            desc += f' — {int(ppl)} person(s) at risk'
-        threats.append({'id': 'FLOOD_RISK', 'label': 'Flood / Water Intrusion', 'severity': sev,
-                         'confidence': round(we, 3), 'contributing': list(set(wc)),
-                         'description': desc + '.'})
-        log.append(f"Water detected — confidence {we:.0%}")
-
-    # ── TILT / STRUCTURAL INSTABILITY ──────────────────────────────────────────
-    tilt_val = max(abs(float(reading.get('roll', 0))), abs(float(reading.get('pitch', 0))))
-    if tilt_val > 15:
-        tile, tilc = 0.0, ['tilt']
-        if   tilt_val > 30: tile += 0.80; log.append(f"Tilt {tilt_val:.1f}° > 30 — severe instability (+0.80)")
-        elif tilt_val > 20: tile += 0.55; log.append(f"Tilt {tilt_val:.1f}° > 20 — significant (+0.55)")
-        else:               tile += 0.35; log.append(f"Tilt {tilt_val:.1f}° > 15 — elevated (+0.35)")
-        if press < 990:
-            tile = min(tile + 0.20, 1.0); tilc.append('pressure')
-            log.append(f"Low pressure {press:.0f} hPa corroborates structural event (+0.20)")
-        sev = 'CRITICAL' if tile >= 0.75 else 'HIGH' if tile >= 0.50 else 'MEDIUM'
-        threats.append({'id': 'TILT_HAZARD', 'label': 'Structural Tilt', 'severity': sev,
-                         'confidence': round(tile, 3), 'contributing': list(set(tilc)),
-                         'description': f"Rover tilt {tilt_val:.1f}° — possible structural collapse or terrain hazard."})
-
-    # ── COMPOUND EMERGENCY — three or more simultaneous HIGH+ threats ──────────
-    high_threats = [t for t in threats if SEV_RANK[t['severity']] >= SEV_RANK['HIGH']]
-    if len(high_threats) >= 3:
-        compound_conf = min(0.65 + 0.10 * (len(high_threats) - 2), 1.0)
-        all_contrib   = list({s for t in high_threats for s in t['contributing']})
-        threats.append({'id': 'COMPOUND_EMERGENCY', 'label': 'Compound Emergency', 'severity': 'CRITICAL',
-                         'confidence': round(compound_conf, 3), 'contributing': all_contrib,
-                         'description': f"{len(high_threats)} simultaneous HIGH+ threats — multi-agency response required."})
-        log.append(f"Compound emergency triggered: {len(high_threats)} concurrent HIGH+ threats")
-
-    threats.sort(key=lambda t: (SEV_RANK[t['severity']], t['confidence']), reverse=True)
-    return threats, log
-
-
-# ─── Zone Status Aggregation ────────────────────────────────────────────────────
-
-def aggregate_zone_status(sc: dict, threats: list) -> tuple:
-    """Returns (zone_status: str, threat_level: int 0-4)."""
-    max_sensor_rank = max((v['rank'] for v in sc.values()), default=0)
-    threat_esc      = SEV_RANK[threats[0]['severity']] if threats else 0
-    effective       = max(max_sensor_rank, threat_esc)
-    if any(t['id'] == 'COMPOUND_EMERGENCY' for t in threats):
-        effective = 4
-    effective = min(effective, 4)
-    return ZONE_STATUS[effective], effective
-
-
-# ─── Action Recommendation ─────────────────────────────────────────────────────
-
-_ACTIONS = {
-    0: ('MONITOR',              'Monitor',             'All parameters within normal range. Continue routine monitoring.'),
-    1: ('HEIGHTENED_WATCH',     'Heightened Watch',    'Readings outside optimal range. Increase monitoring frequency and check equipment.'),
-    2: ('PREPARE_RESPONSE',     'Prepare Response',    'Multiple elevated readings. Alert response teams and prepare resources for deployment.'),
-    3: ('EVACUATE_PERSONNEL',   'Evacuate Personnel',  'Hazardous conditions confirmed. Evacuate non-essential personnel. Dispatch emergency response.'),
-    4: ('IMMEDIATE_EVACUATION', 'Immediate Evacuation','Catastrophic multi-hazard event. Full evacuation. All agencies notified. Incident command established.'),
-}
-
-_THREAT_GUIDANCE = {
-    'FIRE_RISK':          lambda t: 'Fire Dept: deploy immediately' if SEV_RANK[t['severity']] >= 2 else None,
-    'GAS_LEAK':           lambda t: 'shut off gas supply, no ignition sources' if SEV_RANK[t['severity']] >= 2 else None,
-    'TOXIC_EXPOSURE':     lambda t: 'EMS: PPE required for entry' if SEV_RANK[t['severity']] >= 2 else None,
-    'MASS_CASUALTY_RISK': lambda t: 'EMS: mass casualty protocol',
-    'STRUCTURAL_STRESS':  lambda t: 'clear structure, await assessment' if SEV_RANK[t['severity']] >= 2 else None,
-    'FLOOD_RISK':         lambda t: 'isolate electrical systems, evacuate low areas',
-    'TILT_HAZARD':        lambda t: 'clear structure immediately — collapse risk' if SEV_RANK[t['severity']] >= 2 else None,
-    'COMPOUND_EMERGENCY': lambda t: 'Control Room: all agencies',
-}
-
-def recommend_action(threat_level: int, threats: list) -> dict:
-    action_id, action_label, detail = _ACTIONS.get(threat_level, _ACTIONS[0])
-    guidance = [g for t in threats[:4]
-                if (g := _THREAT_GUIDANCE.get(t['id'], lambda _: None)(t)) is not None]
-    if guidance:
-        detail += ' Specific: ' + '; '.join(guidance) + '.'
-    return {'id': action_id, 'label': action_label, 'detail': detail}
-
-
-# ─── Overall Confidence ────────────────────────────────────────────────────────
-
-def overall_confidence(sc: dict, threats: list) -> float:
-    if not threats:
-        return 0.95
-    avg_conf       = sum(t['confidence'] for t in threats) / len(threats)
-    sensor_agree   = sum(1 for v in sc.values() if v['rank'] >= 2) / len(sc)
-    return round(min(avg_conf * 0.7 + sensor_agree * 0.3, 1.0), 3)
-
-
-# ─── Main Decision Entry Point ─────────────────────────────────────────────────
-
-def decide(reading: dict, zone: str = 'Zone A-12') -> dict:
-    """Full SFDE pipeline. reading must contain the standard sensor keys."""
-    t0 = time.monotonic()
-
-    sensor_classes            = classify_all(reading)
-    threats, decision_log     = detect_threats(reading, sensor_classes)
-    zone_status, threat_level = aggregate_zone_status(sensor_classes, threats)
-    action                    = recommend_action(threat_level, threats)
-    confidence                = overall_confidence(sensor_classes, threats)
-
+def _fmt(feature: str, value: float) -> str:
+    """Readable form of one measurement, for threat descriptions."""
+    if feature.endswith('_rise'):
+        return f"{feature[:-5].upper()} {round(value * 100) + 0:+d}% vs clean air"
     return {
-        'timestamp':          reading.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
-        'zone':               zone,
-        'sensor_classes':     sensor_classes,
-        'threats':            threats,
-        'zone_status':        zone_status,
-        'threat_level':       threat_level,
-        'recommended_action': action['id'],
-        'action_label':       action['label'],
-        'action_detail':      action['detail'],
-        'confidence':         confidence,
-        'decision_log':       decision_log,
-        'processing_time_ms': round((time.monotonic() - t0) * 1000, 2),
-    }
+        'temp':            f"temperature {value:.1f} °C",
+        'temp_rate':       f"temperature changing {value:+.1f} °C/min",
+        'humidity':        f"humidity {value:.0f}%",
+        'pressure_d1':     f"pressure changing {value:+.2f} hPa/min",
+        'tilt_deg':        f"tilt {value:.0f}°",
+        'vibration_deg':   f"shaking ±{value:.1f}°",
+        'water':           "water sensor wet" if value else "water sensor dry",
+        'cam_people':      f"{value:.0f} person(s) in view",
+        'cam_rubble_frac': f"rubble in {value:.0%} of camera frames",
+        'cam_spill_frac':  f"spill in {value:.0%} of camera frames",
+    }.get(feature, f"{feature.replace('aud_', '')} sound score {value:.2f}")
 
 
-# ─── Built-in Self-Test Scenarios ──────────────────────────────────────────────
+class FusionEngine:
 
-_TESTS = [
-    {'name': 'All Clear',
-     'reading': {'timestamp': '2024-01-15 10:00:00', 'temperature': 27.0, 'humidity': 58.0,
-                 'pressure': 1013.0, 'mq2': 5.0, 'mq4': 3.0, 'air_toxicity': 8.0,
-                 'people_detected': 0, 'event_rate': 0.3},
-     'expect': 'CLEAR'},
+    def __init__(self, model: dict | None = None, policy: dict | None = None):
+        self.fx = FeatureExtractor()
+        self.model = model if model is not None else load_json(MODEL_PATH)
+        self.policy = policy if policy is not None else (load_json(POLICY_PATH) or {})
+        self.published: dict | None = None
 
-    {'name': 'Gas Leak — High MQ2 + Personnel',
-     'reading': {'timestamp': '2024-01-15 10:01:00', 'temperature': 29.0, 'humidity': 55.0,
-                 'pressure': 1012.0, 'mq2': 30.0, 'mq4': 8.0, 'air_toxicity': 20.0,
-                 'people_detected': 2, 'event_rate': 1.8},
-     'expect': 'CRITICAL'},
+    # ── model evaluation ───────────────────────────────────────────────────────
 
-    {'name': 'Fire Risk — High Temp + Dry + Gas + Personnel',
-     'reading': {'timestamp': '2024-01-15 10:02:00', 'temperature': 50.0, 'humidity': 18.0,
-                 'pressure': 1010.0, 'mq2': 28.0, 'mq4': 5.0, 'air_toxicity': 22.0,
-                 'people_detected': 4, 'event_rate': 2.5},
-     'expect': 'CATASTROPHIC'},
+    @staticmethod
+    def _evaluate(m: dict, f: dict) -> tuple[float, list]:
+        """Probability and each measurement's share of the log-odds."""
+        logit, parts = m['intercept'], []
+        for name, mean, scale, coef in zip(m['features'], m['mean'], m['scale'], m['coef']):
+            c = coef * (f[name] - mean) / (scale or 1.0)
+            logit += c
+            parts.append((name, c))
+        p = 1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, logit))))
+        return p, sorted(parts, key=lambda x: -x[1])
 
-    {'name': 'Toxic Exposure + Mass Casualty',
-     'reading': {'timestamp': '2024-01-15 10:03:00', 'temperature': 32.0, 'humidity': 60.0,
-                 'pressure': 1011.0, 'mq2': 8.0, 'mq4': 4.0, 'air_toxicity': 52.0,
-                 'people_detected': 6, 'event_rate': 1.2},
-     'expect': 'CRITICAL'},
+    # ── main entry point ───────────────────────────────────────────────────────
 
-    {'name': 'Compound Emergency',
-     'reading': {'timestamp': '2024-01-15 10:04:00', 'temperature': 48.0, 'humidity': 15.0,
-                 'pressure': 978.0, 'mq2': 32.0, 'mq4': 22.0, 'air_toxicity': 45.0,
-                 'people_detected': 8, 'event_rate': 4.5},
-     'expect': 'CATASTROPHIC'},
-]
+    def decide(self, reading: dict | None, vision: dict, audio: dict,
+               zone: str = 'Zone A-12', now: datetime | None = None,
+               origin: str = 'board') -> dict:
+        t0 = time.monotonic()
+        now = now or datetime.now()
+        fx = self.fx.update(reading, vision, audio, now)
+        f, live, cur = fx['features'], fx['live'], fx['reading'] or {}
+        any_live = any(live.values())
+        log: list[str] = []
+        threats: list[dict] = []
+        states: dict = {}
 
-def run_tests():
-    print('\n=== SFDE Self-Test ===\n')
-    passed = 0
-    for s in _TESTS:
-        result = decide(s['reading'])
-        ok = result['zone_status'] == s['expect']
-        if ok: passed += 1
-        mark = 'PASS' if ok else 'FAIL'
-        threat_summary = [f"{t['id']}({t['severity']}:{t['confidence']:.0%})" for t in result['threats']]
-        print(f"  {mark} [{s['name']}]")
-        print(f"      Zone:    {result['zone_status']:12s}  (expected {s['expect']})")
-        print(f"      Threats: {threat_summary}")
-        print(f"      Action:  {result['action_label']}")
-        print(f"      Conf:    {result['confidence']:.0%}  ({result['processing_time_ms']:.1f}ms)")
-        print()
-    print(f"  {passed}/{len(_TESTS)} passed\n")
+        trained = (self.model or {}).get('hazards', {})
+        zones = self.policy.get('zone_when_detected', {})
+
+        for key, m in trained.items():
+            missing = [n for n in m['features'] if f.get(n) is None]
+            if missing:
+                why = sorted({SOURCE_NAME[SOURCE_OF[n]] for n in missing if not live[SOURCE_OF[n]]})
+                reason = (f"{', '.join(why)} offline" if why
+                          else f"waiting for {', '.join(missing)}")
+                states[key] = {'state': 'unavailable', 'name': m['name'], 'reason': reason}
+                log.append(f"{m['name']}: cannot evaluate — {reason}")
+                continue
+            p, parts = self._evaluate(m, f)
+            detected = p >= m['threshold']
+            states[key] = {'state': 'detected' if detected else 'clear', 'name': m['name'],
+                           'p': round(p, 3), 'threshold': m['threshold']}
+            if not detected:
+                continue
+            drivers = [n for n, c in parts if c > 0][:3] or [parts[0][0]]
+            level = zones.get(m['id'], 'WARNING')
+            h = m['held_out']
+            threats.append({
+                'id': m['id'], 'label': m['name'], 'severity': SEVERITY_OF_ZONE.get(level, 'MEDIUM'),
+                'zone': level, 'confidence': round(p, 3), 'contributing': drivers,
+                'description': '; '.join(_fmt(n, f[n]) for n in drivers)
+                               + f". Model: {h['precision']:.0%} precision, {h['recall']:.0%} recall "
+                                 f"on held-out data from {m['data']['trials']} trials.",
+            })
+            log.append(f"{m['name']}: p = {p:.2f} ≥ threshold {m['threshold']} "
+                       f"({', '.join(f'{n} {c:+.2f}' for n, c in parts)})")
+
+        for key, why in (self.model or {}).get('not_trained', {}).items():
+            states[key] = {'state': 'untrained', 'reason': why}
+
+        # People in view while a hazard is detected (count comes from the camera model)
+        people = int(f['cam_people'] or 0)
+        if people and threats:
+            top = max(threats, key=lambda t: t['confidence'])
+            threats.append({
+                'id': 'MASS_CASUALTY_RISK', 'label': 'People at Risk', 'severity': top['severity'],
+                'zone': top['zone'], 'confidence': top['confidence'],
+                'contributing': ['cam_people'] + top['contributing'][:2],
+                'description': f"{people} person(s) in camera view while {top['label'].lower()} is detected.",
+            })
+            log.append(f"People at Risk: {people} in view + {top['label']}")
+
+        # ── zone status ────────────────────────────────────────────────────────
+        evaluable = [s for s in states.values() if s['state'] in ('clear', 'detected')]
+        if not self.model or not trained:
+            status, level = 'UNTRAINED', 0
+            action = ('No Model', 'The fusion model has not been trained. Record trials with '
+                                  'record_trials.py, then run train_fusion.py.')
+            log.insert(0, 'No trained hazard models — no verdict')
+        elif not any_live or not evaluable:
+            status, level = 'NO_DATA', 0
+            action = ('No Live Data', 'No trained hazard can be evaluated from the sources that are live. '
+                                      'Check the sensor board, detect.py and audio_detect.py.')
+        else:
+            level = max((ZONE_RANK.get(t['zone'], 2) for t in threats), default=0)
+            esc = self.policy.get('escalate_to_catastrophic', {})
+            critical = [t for t in threats if t['zone'] == 'CRITICAL' and t['id'] != 'MASS_CASUALTY_RISK']
+            if critical and ((esc.get('people_in_view_during_critical_hazard') and people) or
+                             (esc.get('two_or_more_critical_hazards') and len(critical) >= 2)):
+                level = 4
+            status = ZONE_STATUS[level]
+            label, detail = self.policy.get('actions', {}).get(status, [status.title(), ''])
+            tips = [self.policy.get('guidance', {}).get(t['id']) for t in threats[:4]]
+            tips = [t for t in tips if t]
+            action = (label, detail + (' ' + '. '.join(tips) + '.' if tips else ''))
+            unchecked = [f"{s['name']} ({s['reason']})" for s in states.values()
+                         if s['state'] == 'unavailable']
+            if unchecked:
+                action = (action[0], action[1] + ' Not checked right now: ' + '; '.join(unchecked) + '.')
+
+        if fx['calibrating']:
+            pct = min(b.progress for s, b in self.fx.gas.items() if cur.get(s) is not None)
+            log.insert(0, f'Gas sensors learning their clean-air level ({pct:.0%})')
+        for src, on in live.items():
+            if not on:
+                log.append(f'{SOURCE_NAME[src]} offline')
+
+        threats.sort(key=lambda t: (ZONE_RANK.get(t['zone'], 0), t['confidence']), reverse=True)
+        self.published = self._publish(cur, f, now) if live['board'] else None
+        missing = sorted(k for k in ('temperature', 'humidity', 'pressure', 'mq2', 'mq4', 'mq135',
+                                     'roll', 'pitch', 'water_detected')
+                         if live['board'] and cur.get(k) is None)
+
+        return {
+            'timestamp':          now.strftime(TS_FMT),
+            'zone':               zone,
+            'data_mode':          'SIMULATED' if origin == 'simulation' else 'LIVE',
+            'sources': {
+                'sensors': {'live': live['board'], 'origin': origin if live['board'] else None,
+                            'age_s': fx['board_age_s'], 'calibrating': fx['calibrating'],
+                            'missing': missing},
+                'camera':  {'live': live['camera'], 'age_s': vision.get('age_s'),
+                            'source': vision.get('source')},
+                'audio':   {'live': live['audio'], 'age_s': audio.get('age_s')},
+            },
+            'model': None if not self.model else {
+                'trained_at': self.model.get('trained_at'),
+                'trials':     self.model.get('trials'),
+                'evaluation': self.model.get('evaluation'),
+                'hazards':    {k: {'name': m['name'], 'threshold': m['threshold'],
+                                   'trials': m['data']['trials'], **m['held_out']}
+                               for k, m in trained.items()},
+            },
+            'hazard_states':      states,
+            'features':           f,
+            'sensor_classes':     self._inputs(cur, f, live),
+            'threats':            threats,
+            'zone_status':        status,
+            'threat_level':       level,
+            'recommended_action': action[0].upper().replace(' ', '_'),
+            'action_label':       action[0],
+            'action_detail':      action[1],
+            'confidence':         round(len(evaluable) / len(trained), 2) if trained else 0.0,
+            'decision_log':       log,
+            'processing_time_ms': round((time.monotonic() - t0) * 1000, 2),
+        }
+
+    # ── what the dashboard's "Live Inputs" table shows: values only, no grading ─
+
+    def _inputs(self, cur: dict, f: dict, live: dict) -> dict:
+        def row(value, display, source, note=''):
+            if not live[source] or value is None:
+                return {'value': None, 'status': 'OFFLINE', 'label': note or 'No data',
+                        'rank': 0, 'display': '—'}
+            return {'value': value, 'status': 'LIVE', 'label': note, 'rank': 0, 'display': display}
+
+        sc = {
+            'temperature': row(f['temp'], f"{f['temp'] or 0:.1f} °C", 'board'),
+            'humidity':    row(f['humidity'], f"{f['humidity'] or 0:.0f} %", 'board'),
+            'pressure':    row(cur.get('pressure'), f"{cur.get('pressure') or 0:.0f} hPa", 'board'),
+        }
+        for s in GAS_SENSORS:
+            rise = f[f'{s}_rise']
+            if live['board'] and cur.get(s) is not None and rise is None:
+                sc[s] = {'value': None, 'status': 'CALIBRATING', 'label': 'Learning clean-air level',
+                         'rank': 0, 'display': f'{self.fx.gas[s].progress:.0%}'}
+            else:
+                sc[s] = row(rise, f"{(rise or 0) * 100:+.0f} %", 'board')
+        sc['tilt'] = row(f['tilt_deg'], f"{f['tilt_deg'] or 0:.0f}°", 'board')
+        sc['water_detected'] = row(f['water'], 'WET' if f['water'] else 'DRY', 'board')
+        sc['people_detected'] = row(f['cam_people'], f"{f['cam_people'] or 0:.0f}", 'camera')
+        sc['rubble'] = row(f['cam_rubble_frac'], f"{f['cam_rubble_frac'] or 0:.0%} of frames", 'camera')
+        sc['spills'] = row(f['cam_spill_frac'], f"{f['cam_spill_frac'] or 0:.0%} of frames", 'camera')
+        aud = {k[4:]: v for k, v in f.items() if k.startswith('aud_') and v is not None}
+        top = max(aud.items(), key=lambda kv: kv[1]) if aud else None
+        sc['audio'] = row(top[1] if top else None,
+                          f"{top[0]} {top[1]:.2f}" if top else '—', 'audio',
+                          note='' if top else 'Waiting for audio scores')
+        return sc
+
+    # ── reading published to sensor_log.json ───────────────────────────────────
+
+    def _publish(self, cur: dict, f: dict, now: datetime) -> dict:
+        """
+        The reading the dashboard shows. mq2 / mq4 / mq135 are the percent rise
+        over the sensor's clean-air level (0 = clean air, 100 = double), never
+        below 0. The board's raw numbers are kept as *_raw.
+        """
+        out = {k: v for k, v in cur.items() if not k.startswith('_')}
+        out['timestamp'] = now.strftime(TS_FMT)
+        for s in GAS_SENSORS:
+            rise = f[f'{s}_rise']
+            out[f'{s}_raw'] = cur.get(s)
+            out[s] = None if rise is None else round(max(rise, 0.0) * 100, 1)
+        out['air_toxicity'] = out['mq135']
+        out['gas_calibrating'] = any(cur.get(s) is not None and not self.fx.gas[s].calibrated
+                                     for s in GAS_SENSORS)
+        out['people_detected'] = int(f['cam_people'] or 0)
+        frac = [v for v in (f['cam_rubble_frac'], f['cam_spill_frac']) if v is not None]
+        out['event_rate'] = round(max(frac), 2) if frac else 0.0
+        return out
 
 
-# ─── Continuous Runner ─────────────────────────────────────────────────────────
+# ─── Engine tests ──────────────────────────────────────────────────────────────
 
-def run_continuous(interval: float, zone: str):
-    sensor_path = ROOT / 'sensor_log.json'
-    out_path    = ROOT / 'fusion_log.json'
-    last_ts     = None
+def _run_tests() -> bool:
+    """
+    Tests the engine's behaviour with a small stand-in model. They check the
+    machinery (untrained, offline, unavailable, policy), not detection accuracy:
+    accuracy is whatever train_fusion.py measures on your recorded trials.
+    """
+    from datetime import timedelta
+    T0 = datetime(2026, 10, 9, 10, 0, 0)
+    held = {'precision': 1.0, 'recall': 1.0, 'f1': 1.0}
+    model = {'trained_at': 'test', 'hazards': {
+        'gas': {'id': 'GAS_LEAK', 'name': 'Gas Leak', 'features': ['mq2_rise'], 'mean': [0.5],
+                'scale': [0.5], 'coef': [6.0], 'intercept': 0.0, 'threshold': 0.5,
+                'data': {'trials': 3}, 'held_out': held},
+        'structural': {'id': 'STRUCTURAL_STRESS', 'name': 'Structural Damage',
+                       'features': ['cam_rubble_frac'], 'mean': [0.4], 'scale': [0.3], 'coef': [5.0],
+                       'intercept': 0.0, 'threshold': 0.5, 'data': {'trials': 3}, 'held_out': held},
+    }, 'not_trained': {'water': '0 trial(s) recorded, need at least 2'}}
+    policy = load_json(POLICY_PATH) or {}
+    OFF = {'live': False}
+    CAM = lambda **kw: {'live': True, 'people': 0, 'rubble': 0, 'spills': 0, **kw}
+    calm = lambda i, **kw: {'temperature': 27.0, 'humidity': 60.0, 'pressure': 912.0,
+                            'mq2': 410 + i % 3, 'water_detected': False, **kw}
 
-    print(f'[SFDE] {sensor_path.name} -> {out_path.name}  (interval {interval}s, zone: {zone})')
-    print(f'[SFDE] Status: CLEAR | ELEVATED | WARNING | CRITICAL | CATASTROPHIC\n')
+    def play(steps, mdl=model):
+        eng, out = FusionEngine(model=mdl, policy=policy), None
+        for i, (r, cam, mic) in enumerate(steps):
+            out = eng.decide(r, cam, mic, now=T0 + timedelta(seconds=i))
+        return out
 
-    while True:
-        try:
-            if not sensor_path.exists():
-                time.sleep(interval); continue
+    results = []
 
-            raw  = json.loads(sensor_path.read_text())
-            data = raw[-1] if isinstance(raw, list) and raw else (raw if isinstance(raw, dict) else None)
-            if not data:
-                time.sleep(interval); continue
+    def check(name, out, zone, has=(), lacks=(), state=None):
+        ids = {t['id'] for t in out['threats']}
+        ok = (out['zone_status'] == zone and all(h in ids for h in has)
+              and not any(l in ids for l in lacks)
+              and (state is None or out['hazard_states'][state[0]]['state'] == state[1]))
+        results.append(ok)
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}  →  {out['zone_status']}"
+              f"  [{', '.join(sorted(ids)) or 'no threats'}]")
 
-            ts = data.get('timestamp')
-            if ts == last_ts:
-                time.sleep(interval); continue
+    warm = [(calm(i), CAM(), OFF) for i in range(40)]
+    leak = warm + [(calm(i, mq2=410 + 40 * (i - 40)), CAM(), OFF) for i in range(40, 60)]
 
-            last_ts = ts
-            result  = decide(data, zone)
-            out_path.write_text(json.dumps(result, indent=2))
+    check('No model file', play(warm, mdl={}), 'UNTRAINED')
+    check('Calm, model loaded', play(warm), 'CLEAR')
+    check('Gas rises', play(leak), 'CRITICAL', has=['GAS_LEAK'])
+    check('Gas rises with people in view (policy escalates)',
+          play(leak[:-10] + [(r, CAM(people=2), m) for r, _, m in leak[-10:]]), 'CATASTROPHIC',
+          has=['GAS_LEAK', 'MASS_CASUALTY_RISK'])
+    check('People in view, nothing detected', play(warm + [(calm(i), CAM(people=3), OFF) for i in range(10)]),
+          'CLEAR', lacks=['MASS_CASUALTY_RISK'])
+    check('Camera offline → structural cannot be evaluated, gas still can',
+          play([(calm(i), OFF, OFF) for i in range(40)]), 'CLEAR', state=('structural', 'unavailable'))
+    check('Board offline during a leak → gas not reported from an old reading',
+          play(leak + [(None, CAM(), OFF) for _ in range(15)]), 'CLEAR', lacks=['GAS_LEAK'],
+          state=('gas', 'unavailable'))
+    check('Gas still calibrating → gas cannot be evaluated yet',
+          play([(calm(i, mq2=3000), CAM(), OFF) for i in range(5)]), 'CLEAR', state=('gas', 'unavailable'))
+    check('Hazard never recorded stays untrained', play(warm), 'CLEAR', state=('water', 'untrained'))
+    check('Nothing connected', play([(None, OFF, OFF)] * 3), 'NO_DATA')
+    check('Rubble held in view', play(warm + [(calm(i), CAM(rubble=1), OFF) for i in range(12)]),
+          'CRITICAL', has=['STRUCTURAL_STRESS'])
 
-            n_threats = len(result['threats'])
-            top = result['threats'][0]['id'] if n_threats else '—'
-            print(f"  [{result['timestamp']}]  {result['zone_status']:12s}  L{result['threat_level']}"
-                  f"  {result['action_label']:25s}  threats:{n_threats}  top:{top}")
+    print(f"\n  {sum(results)}/{len(results)} passed\n")
+    return all(results)
 
-        except (json.JSONDecodeError, KeyError, IndexError) as e:
-            print(f'[SFDE] Parse error: {e}')
-        except Exception as e:
-            print(f'[SFDE] Error: {e}')
-
-        time.sleep(interval)
-
-
-# ─── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser(description='AEGIS Sensor Fusion Decision Engine')
-    ap.add_argument('--interval', type=float, default=1.0,          help='Poll interval in seconds (default 1)')
-    ap.add_argument('--zone',     default='Zone A-12',              help='Zone label')
-    ap.add_argument('--once',     action='store_true',              help='Single pass then exit')
-    ap.add_argument('--test',     action='store_true',              help='Run self-test scenarios')
+    ap = argparse.ArgumentParser(description='VERDE Sensor Fusion Engine')
+    ap.add_argument('--test', action='store_true', help='Run the engine tests')
     args = ap.parse_args()
-
     if args.test:
-        run_tests()
-    elif args.once:
-        raw  = json.loads((ROOT / 'sensor_log.json').read_text())
-        data = raw[-1] if isinstance(raw, list) else raw
-        print(json.dumps(decide(data, args.zone), indent=2))
+        print('\n=== Fusion engine tests ===\n')
+        raise SystemExit(0 if _run_tests() else 1)
+    m = load_json(MODEL_PATH)
+    if not m:
+        print('No fusion_model.json yet. Record trials (record_trials.py), then run train_fusion.py.')
     else:
-        run_continuous(args.interval, args.zone)
+        print(f"Model trained {m.get('trained_at')} on trials {m.get('trials')}")
+        for k, h in m.get('hazards', {}).items():
+            print(f"  {k:<12} precision {h['held_out']['precision']:.2f}  recall {h['held_out']['recall']:.2f}"
+                  f"  trials {h['data']['trials']}")
+        for k, why in m.get('not_trained', {}).items():
+            print(f"  {k:<12} not trained — {why}")
+    print('\nThe engine is driven by:  python coordinator.py')
