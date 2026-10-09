@@ -20,7 +20,7 @@ Usage:
   python coordinator.py --zone "Zone B-7"
 """
 
-import json, os, sys, time, argparse, urllib.request
+import json, os, re, sys, time, argparse, urllib.request, urllib.error, urllib.parse
 from pathlib import Path
 
 # ── Fix Windows console encoding so ANSI + Unicode print correctly ──────────
@@ -51,19 +51,19 @@ CONTACTS = [
     },
     {
         'name':    'Kovidh',
-        'phone':   '9284955662',
+        'phone':   '9108307690',
         'role':    'EMS',
         'threats': {'TOXIC_EXPOSURE', 'MASS_CASUALTY_RISK', 'COMPOUND_EMERGENCY'},
     },
     {
         'name':    'Likitha',
-        'phone':   '9740019608',
+        'phone':   '9108307690',
         'role':    'Police',
         'threats': {'MASS_CASUALTY_RISK', 'COMPOUND_EMERGENCY'},
     },
     {
         'name':    'Barath',
-        'phone':   '8778036377',
+        'phone':   '9108307690',
         'role':    'Control Room',
         'threats': {'GAS_LEAK', 'STRUCTURAL_STRESS', 'COMPOUND_EMERGENCY'},
     },
@@ -74,41 +74,56 @@ ALERT_THRESHOLD = 3    # CRITICAL (3) and CATASTROPHIC (4) trigger SMS
 ALERT_COOLDOWN  = 300  # seconds before re-alerting the same contact
 
 
-# ── SMS helpers ──────────────────────────────────────────────────────────────
+# ── WhatsApp helpers (CallMeBot) ─────────────────────────────────────────────
+# Each recipient registers once with CallMeBot and gets their own API key.
+# app/.env.local:  CALLMEBOT_KEYS=9108307690:123456,9284955662:654321
 
-def _load_api_key() -> str:
-    """Read FAST2SMS_API_KEY from app/.env.local, return empty string if missing."""
+def _load_api_key() -> dict[str, str]:
+    """Read CALLMEBOT_KEYS from app/.env.local → {phone: apikey}."""
     env = ROOT / 'app' / '.env.local'
     if not env.exists():
-        return ''
+        return {}
+    keys = {}
     for line in env.read_text(encoding='utf-8').splitlines():
-        if line.startswith('FAST2SMS_API_KEY='):
-            key = line.split('=', 1)[1].strip()
-            if key and key != 'your_api_key_here':
-                return key
-    return ''
+        if line.startswith('CALLMEBOT_KEYS='):
+            for pair in line.split('=', 1)[1].split(','):
+                phone, _, key = pair.strip().partition(':')
+                if phone and key and key != 'your_api_key_here':
+                    keys[phone.strip()] = key.strip()
+    return keys
 
 
-def _send_sms(api_key: str, phone: str, message: str) -> bool:
-    payload = json.dumps({
-        'route': 'q', 'numbers': phone,
-        'message': message, 'flash': 0, 'dnd': 0,
-    }).encode()
-    req = urllib.request.Request(
-        'https://www.fast2sms.com/dev/bulkV2',
-        data=payload,
-        headers={'authorization': api_key, 'Content-Type': 'application/json'},
-        method='POST',
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.loads(r.read()).get('return', False)
-    except Exception as e:
-        print(f'\n  [SMS ERR] {e}')
+def _send_sms(api_keys: dict[str, str], phone: str, message: str) -> bool:
+    key = api_keys.get(phone)
+    if not key:
+        print(f'\n  [WA ERR] No CallMeBot key for {phone} in app/.env.local')
         return False
+    url = 'https://api.callmebot.com/whatsapp.php?' + urllib.parse.urlencode({
+        'phone': f'+91{phone}', 'text': message, 'apikey': key,
+    })
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            body = r.read().decode('utf-8', errors='replace')
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+    except Exception as e:
+        print(f'\n  [WA ERR] {e}')
+        return False
+    if 'queued' in body.lower() or 'sent' in body.lower():
+        return True
+    text = ' '.join(re.sub(r'<[^>]+>', ' ', body).split())[:200]
+    print(f'\n  [WA ERR] CallMeBot: {text}')
+    return False
 
 
-def _build_sms(fusion: dict, contact: dict) -> str:
+def _location_text(reading: dict) -> str:
+    lat, lon = reading.get('lat'), reading.get('lon')
+    if reading.get('gps_valid') and lat is not None and lon is not None:
+        return f"Loc: {lat:.5f},{lon:.5f}\nhttps://maps.google.com/?q={lat:.6f},{lon:.6f}"
+    return "Loc: GPS unavailable"
+
+
+def _build_sms(fusion: dict, contact: dict, reading: dict) -> str:
     top = ', '.join(t['id'] for t in fusion['threats'][:3]) or 'NONE'
     sc  = fusion['sensor_classes']
     return (
@@ -119,8 +134,34 @@ def _build_sms(fusion: dict, contact: dict) -> str:
         f"T={sc.get('temperature',{}).get('value',0):.1f}C "
         f"MQ2={sc.get('mq2',{}).get('value',0):.1f}% "
         f"Tox={sc.get('air_toxicity',{}).get('value',0):.1f}%\n"
+        f"{_location_text(reading)}\n"
         f"-- VERDE Emergency Response System"
     )
+
+
+def send_test_sms() -> int:
+    """Send one test SMS to every unique contact number, then exit."""
+    api_key = _load_api_key()
+    if not api_key:
+        print('  [TEST-SMS] No CALLMEBOT_KEYS in app/.env.local')
+        return 1
+    try:
+        reading = json.loads((ROOT / 'sensor_log.json').read_text(encoding='utf-8'))[-1]
+    except Exception:
+        reading = {}
+    message = (
+        "AEGIS TEST -- SMS path check, no emergency.\n"
+        f"{_location_text(reading)}\n"
+        "-- VERDE Emergency Response System"
+    )
+    numbers = sorted({c['phone'] for c in CONTACTS})
+    print(f'  [TEST-SMS] Sending WhatsApp to {", ".join(numbers)}\n{message}\n')
+    ok = True
+    for phone in numbers:
+        sent = _send_sms(api_key, phone, message)
+        print(f'  [TEST-SMS] {phone}  →  {"SENT" if sent else "FAILED"}')
+        ok = ok and sent
+    return 0 if ok else 1
 
 
 # ── Alert manager ────────────────────────────────────────────────────────────
@@ -128,7 +169,7 @@ def _build_sms(fusion: dict, contact: dict) -> str:
 class AlertManager:
     """Fires SMS when zone escalates into CRITICAL/CATASTROPHIC territory."""
 
-    def __init__(self, api_key: str, enabled: bool):
+    def __init__(self, api_key: dict[str, str], enabled: bool):
         self.api_key    = api_key
         self.enabled    = enabled
         self.live       = enabled and bool(api_key)   # True = real SMS sent
@@ -136,13 +177,13 @@ class AlertManager:
         self.prev_level = 0
 
         if enabled and not api_key:
-            print('  [ALERTS] No Fast2SMS key in app/.env.local — running in DRY RUN mode')
+            print('  [ALERTS] No CALLMEBOT_KEYS in app/.env.local — running in DRY RUN mode')
         elif enabled and api_key:
-            print(f'  [ALERTS] ARMED — key {api_key[:8]}...  cooldown {ALERT_COOLDOWN}s')
+            print(f'  [ALERTS] ARMED — WhatsApp keys for {len(api_key)} number(s)  cooldown {ALERT_COOLDOWN}s')
         else:
             print('  [ALERTS] disabled (pass --alerts to arm)')
 
-    def check(self, fusion: dict):
+    def check(self, fusion: dict, reading: dict):
         level = ZONE_RANK.get(fusion['zone_status'], 0)
 
         if level < ALERT_THRESHOLD or level <= self.prev_level:
@@ -166,7 +207,7 @@ class AlertManager:
                 continue
 
             if self.live:
-                ok     = _send_sms(self.api_key, phone, _build_sms(fusion, contact))
+                ok     = _send_sms(self.api_key, phone, _build_sms(fusion, contact, reading))
                 status = 'SENT' if ok else 'FAILED'
             else:
                 status = 'DRY-RUN'
@@ -263,7 +304,7 @@ def run(zone: str, interval: float, scenario_interval: int, alerts_enabled: bool
             ehs = ehs_compute(zone)
 
             # 6. Auto-alert check
-            alert_mgr.check(fusion)
+            alert_mgr.check(fusion, reading)
 
             # 7. Status line
             ms = (time.monotonic() - t0) * 1000
@@ -296,7 +337,12 @@ if __name__ == '__main__':
                     help='Arm auto-SMS when zone hits CRITICAL or CATASTROPHIC')
     ap.add_argument('--mode',              choices=['sim', 'http'], default='sim',
                     help='"sim" = simulation (default), "http" = live board at 10.161.238.74')
+    ap.add_argument('--test-sms',          action='store_true',
+                    help='Send one test SMS to the contact number(s) and exit')
     args = ap.parse_args()
+
+    if args.test_sms:
+        sys.exit(send_test_sms())
 
     run(
         zone=args.zone,

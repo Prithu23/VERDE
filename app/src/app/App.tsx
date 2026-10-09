@@ -6,9 +6,9 @@ import ReportsView from './components/ReportsView';
 
 const contacts: Record<string, { name: string; phone: string }> = {
   'Fire Department':         { name: 'Prithika', phone: '9108307690' },
-  'EMS / Ambulance':         { name: 'Kovidh',   phone: '9284955662' },
-  'Police Coordination':     { name: 'Likitha',  phone: '9740019608' },
-  'Government Control Room': { name: 'Barath',   phone: '8778036377' },
+  'EMS / Ambulance':         { name: 'Kovidh',   phone: '9108307690' },
+  'Police Coordination':     { name: 'Likitha',  phone: '9108307690' },
+  'Government Control Room': { name: 'Barath',   phone: '9108307690' },
 };
 
 type NotifyState = 'idle' | 'sending' | 'sent' | 'error';
@@ -83,7 +83,7 @@ export default function App() {
       const data = await res.json();
       if (data.return) {
         setNotifyState(prev => ({ ...prev, [alert.agency]: 'sent' }));
-        toast.success(`SMS sent to ${contact.name} (${contact.phone})`);
+        toast.success(`WhatsApp sent to ${contact.name} (${contact.phone})`);
       } else {
         throw new Error(Array.isArray(data.message) ? data.message[0] : data.message);
       }

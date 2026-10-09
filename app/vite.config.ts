@@ -4,7 +4,28 @@ import fs from 'fs'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
-function notifyPlugin(apiKey: string) {
+// CALLMEBOT_KEYS=9108307690:123456,9284955662:654321  →  { phone: apikey }
+function parseCallMeBotKeys(raw: string): Record<string, string> {
+  const keys: Record<string, string> = {}
+  for (const pair of raw.split(',')) {
+    const [phone, key] = pair.split(':').map(s => s?.trim())
+    if (phone && key && key !== 'your_api_key_here') keys[phone] = key
+  }
+  return keys
+}
+
+function roverLocation(): string {
+  try {
+    const log = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'sensor_log.json'), 'utf-8'))
+    const r = Array.isArray(log) ? log[log.length - 1] : log
+    if (r?.gps_valid && r.lat != null && r.lon != null) {
+      return `Loc: ${r.lat.toFixed(5)},${r.lon.toFixed(5)}\nhttps://maps.google.com/?q=${r.lat},${r.lon}`
+    }
+  } catch {}
+  return 'Loc: GPS unavailable'
+}
+
+function notifyPlugin(apiKeys: Record<string, string>) {
   return {
     name: 'notify-api',
     configureServer(server: any) {
@@ -17,10 +38,11 @@ function notifyPlugin(apiKey: string) {
           try {
             const { phone, name, agency, severity, description, status } = JSON.parse(body)
 
+            const apiKey = apiKeys[phone]
             if (!apiKey) {
               res.statusCode = 500
               res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ return: false, message: ['FAST2SMS_API_KEY not set in .env.local'] }))
+              res.end(JSON.stringify({ return: false, message: [`No CallMeBot key for ${phone} in CALLMEBOT_KEYS (.env.local)`] }))
               return
             }
 
@@ -29,18 +51,20 @@ function notifyPlugin(apiKey: string) {
               `Agency: ${agency}\n` +
               `Severity: ${severity} | Status: ${status}\n` +
               `${description}\n` +
+              `${roverLocation()}\n` +
               `Respond immediately.\n` +
               `-- VERDE Emergency Response System`
 
-            const r = await fetch('https://www.fast2sms.com/dev/bulkV2', {
-              method: 'POST',
-              headers: { authorization: apiKey, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ route: 'q', numbers: phone, message, flash: 0, dnd: 0 }),
-            })
-
-            const data = await r.json()
+            const qs = new URLSearchParams({ phone: `+91${phone}`, text: message, apikey: apiKey })
+            const r = await fetch(`https://api.callmebot.com/whatsapp.php?${qs}`)
+            const text = await r.text()
+            const ok = /queued|sent/i.test(text)
             res.setHeader('Content-Type', 'application/json')
-            res.end(JSON.stringify({ ...data, recipient: name }))
+            res.end(JSON.stringify({
+              return: ok,
+              message: [ok ? 'WhatsApp queued' : text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)],
+              recipient: name,
+            }))
           } catch (e) {
             res.statusCode = 500
             res.setHeader('Content-Type', 'application/json')
@@ -143,7 +167,7 @@ export default defineConfig(({ mode }) => {
     figmaAssetResolver(),
     locationProxy(),
     serveParentData(),
-    notifyPlugin(env.FAST2SMS_API_KEY || ''),
+    notifyPlugin(parseCallMeBotKeys(env.CALLMEBOT_KEYS || '')),
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
     react(),
