@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Cpu, ChevronDown, ChevronUp, Shield } from 'lucide-react';
 import { useFusionData } from '../hooks/useFusionData';
-import type { SensorClass, Threat } from '../hooks/useFusionData';
+import type { HazardState, ModelInfo, SensorClass, SourceState, Threat } from '../hooks/useFusionData';
 
 // ── Color maps ─────────────────────────────────────────────────────────────────
 
@@ -12,6 +12,8 @@ const ZONE_META: Record<string, { text: string; bg: string; border: string; bar:
   WARNING:      { text: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/40', bar: 'bg-orange-500', glow: 'rgba(249,115,22,0.25)'  },
   CRITICAL:     { text: 'text-red-400',    bg: 'bg-red-500/10',    border: 'border-red-500/40',    bar: 'bg-red-500',    glow: 'rgba(239,68,68,0.30)'   },
   CATASTROPHIC: { text: 'text-red-300',    bg: 'bg-red-500/15',    border: 'border-red-400/60',    bar: 'bg-red-400',    glow: 'rgba(239,68,68,0.50)'   },
+  NO_DATA:      { text: 'text-gray-400',   bg: 'bg-white/5',       border: 'border-white/15',      bar: 'bg-gray-500',   glow: 'rgba(0,0,0,0)'          },
+  UNTRAINED:    { text: 'text-gray-400',   bg: 'bg-white/5',       border: 'border-white/15',      bar: 'bg-gray-500',   glow: 'rgba(0,0,0,0)'          },
 };
 
 const STATUS_META: Record<string, { text: string; dot: string }> = {
@@ -20,6 +22,9 @@ const STATUS_META: Record<string, { text: string; dot: string }> = {
   ELEVATED: { text: 'text-cyan-400',   dot: 'bg-cyan-400'   },
   WARNING:  { text: 'text-orange-400', dot: 'bg-orange-500' },
   CRITICAL: { text: 'text-red-400',    dot: 'bg-red-500'    },
+  LIVE:        { text: 'text-gray-300', dot: 'bg-green-500' },
+  OFFLINE:     { text: 'text-gray-600', dot: 'bg-gray-700' },
+  CALIBRATING: { text: 'text-blue-300', dot: 'bg-blue-400' },
 };
 
 const SEV_META: Record<string, { text: string; border: string; bg: string; bar: string }> = {
@@ -33,17 +38,55 @@ const SENSOR_LABEL: Record<string, string> = {
   temperature:    'Temperature',
   humidity:       'Humidity',
   pressure:       'Pressure',
-  mq2:            'MQ2 Gas',
-  mq4:            'MQ4 Methane',
-  air_toxicity:   'Air Toxicity',
-  people_detected:'People',
-  event_rate:     'Event Rate',
+  mq2:            'MQ2 vs clean air',
+  mq4:            'MQ4 vs clean air',
+  mq135:          'MQ135 vs clean air',
+  tilt:           'Rover tilt',
+  water_detected: 'Water sensor',
+  people_detected:'People (camera)',
+  rubble:         'Rubble (camera)',
+  spills:         'Spill (camera)',
+  audio:          'Top sound score (mic)',
 };
 
-const SENSOR_UNIT: Record<string, string> = {
-  temperature: '°C', humidity: '%', pressure: ' hPa', mq2: '%',
-  mq4: '%', air_toxicity: '%', people_detected: '', event_rate: '/s',
-};
+/** One trained hazard model: its live probability against its fitted threshold. */
+function HazardChip({ id, s, info }: { id: string; s: HazardState; info?: ModelInfo['hazards'][string] }) {
+  const tone =
+    s.state === 'detected'    ? 'text-red-300 border-red-500/40 bg-red-500/10' :
+    s.state === 'clear'       ? 'text-green-300 border-green-500/25 bg-green-500/5' :
+    s.state === 'unavailable' ? 'text-yellow-300 border-yellow-500/30 bg-yellow-500/5' :
+                                'text-gray-500 border-white/10 bg-white/5';
+  const body =
+    s.state === 'detected' || s.state === 'clear'
+      ? `p ${(s.p ?? 0).toFixed(2)} / threshold ${s.threshold}`
+      : s.state === 'unavailable' ? `cannot evaluate: ${s.reason}` : `not trained: ${s.reason}`;
+  return (
+    <div className={`px-2.5 py-1.5 rounded-lg border text-[10px] leading-tight ${tone}`}>
+      <div className="font-bold">{s.name ?? id}{s.state === 'detected' ? ' — DETECTED' : ''}</div>
+      <div className="opacity-80 font-mono">{body}</div>
+      {info && (
+        <div className="text-gray-500">
+          held-out: precision {(info.precision * 100).toFixed(0)}% · recall {(info.recall * 100).toFixed(0)}% · {info.trials} trials
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SourceChip({ name, state, note }: { name: string; state?: SourceState; note?: string }) {
+  const live = !!state?.live;
+  return (
+    <span
+      className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-full border ${
+        live ? 'text-green-300 border-green-500/30 bg-green-500/10'
+             : 'text-gray-500 border-white/10 bg-white/5'
+      }`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${live ? 'bg-green-400 animate-pulse' : 'bg-gray-600'}`} />
+      {name} {live ? (note ?? 'LIVE') : 'OFFLINE'}
+    </span>
+  );
+}
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
@@ -89,15 +132,14 @@ function ThreatCard({ threat }: { threat: Threat }) {
 
 function SensorRow({ name, sc }: { name: string; sc: SensorClass }) {
   const sm   = STATUS_META[sc.status] ?? STATUS_META['NORMAL'];
-  const unit = SENSOR_UNIT[name] ?? '';
-  const val  = Number.isInteger(sc.value) ? String(sc.value) : sc.value.toFixed(1);
+  const val  = sc.display ?? (sc.value === null ? '—' : String(sc.value));
 
   return (
     <div className="flex items-center gap-2 py-1.5 border-b border-white/5 last:border-0">
       <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sm.dot} ${sc.status === 'CRITICAL' ? 'animate-pulse' : ''}`} />
       <span className="text-[11px] text-gray-500 flex-1 min-w-0 truncate">{SENSOR_LABEL[name] ?? name}</span>
-      <span className={`text-[11px] font-bold tabular-nums flex-shrink-0 ${sm.text}`}>{val}{unit}</span>
-      <span className={`text-[9px] font-bold flex-shrink-0 w-16 text-right ${sm.text}`}>{sc.status}</span>
+      <span className={`text-[11px] font-bold tabular-nums flex-shrink-0 ${sm.text}`} title={sc.label}>{val}</span>
+      <span className={`text-[9px] font-bold flex-shrink-0 w-20 text-right ${sm.text}`}>{sc.status}</span>
     </div>
   );
 }
@@ -120,9 +162,9 @@ export default function FusionStatus() {
         </div>
         <div className="flex flex-col items-center justify-center h-28 gap-3">
           <Cpu className="w-8 h-8 text-cyan-500/25 animate-pulse" />
-          <p className="text-sm text-gray-600">Awaiting fusion engine — run to start</p>
+          <p className="text-sm text-gray-600">Coordinator is not running — no fusion data</p>
           <code className="text-xs text-cyan-600 bg-cyan-500/5 border border-cyan-500/20 px-3 py-1.5 rounded font-mono">
-            python fusion_engine.py
+            python coordinator.py
           </code>
         </div>
       </div>
@@ -131,6 +173,10 @@ export default function FusionStatus() {
 
   const zm   = ZONE_META[fusion.zone_status] ?? ZONE_META['CLEAR'];
   const pulse = fusion.zone_status === 'CATASTROPHIC' || fusion.zone_status === 'CRITICAL';
+  const simulated = fusion.data_mode === 'SIMULATED';
+  const noData = fusion.zone_status === 'NO_DATA' || fusion.zone_status === 'UNTRAINED';
+  const untrained = fusion.zone_status === 'UNTRAINED';
+  const src = fusion.sources;
 
   return (
     <div
@@ -142,18 +188,61 @@ export default function FusionStatus() {
         <div className="flex items-center gap-2">
           <Cpu className="w-5 h-5 text-cyan-400" />
           <h2 className="text-lg font-bold text-cyan-400 tracking-wide">Sensor Fusion Decision Engine</h2>
-          <span className="flex items-center gap-1 ml-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-            <span className="text-xs text-green-400">LIVE</span>
-          </span>
+          {simulated ? (
+            <span className="ml-1 text-[10px] font-black px-2 py-0.5 rounded bg-yellow-500/20 border border-yellow-500/40 text-yellow-300">
+              SIMULATED SENSORS
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 ml-1">
+              <span className={`w-1.5 h-1.5 rounded-full ${noData ? 'bg-gray-600' : 'bg-green-400 animate-pulse'}`} />
+              <span className={`text-xs ${noData ? 'text-gray-500' : 'text-green-400'}`}>{untrained ? 'NOT TRAINED' : noData ? 'NO DATA' : 'LIVE'}</span>
+            </span>
+          )}
         </div>
         <div className="text-right flex-shrink-0 ml-4">
           <div className="text-xs text-gray-600">{fusion.zone} · {fusion.timestamp}</div>
           <div className="text-[10px] text-gray-700">
-            {fusion.processing_time_ms}ms · conf {(fusion.confidence * 100).toFixed(0)}%
+            {fusion.processing_time_ms}ms · {(fusion.confidence * 100).toFixed(0)}% of trained hazards evaluable
           </div>
         </div>
       </div>
+
+      {/* ── Data sources ────────────────────────────────────────────────────── */}
+      {src && (
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <SourceChip
+            name="Sensor board"
+            state={src.sensors}
+            note={simulated ? 'SIMULATED' : src.sensors.calibrating ? 'CALIBRATING GAS' : 'LIVE'}
+          />
+          <SourceChip name="Camera" state={src.camera} />
+          <SourceChip name="Microphone" state={src.audio} />
+          {src.sensors.live && (src.sensors.missing?.length ?? 0) > 0 && (
+            <span className="text-[10px] text-gray-500">
+              Not reported by board: {src.sensors.missing!.join(', ')}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── Trained hazard models ───────────────────────────────────────────── */}
+      {fusion.hazard_states && Object.keys(fusion.hazard_states).length > 0 && (
+        <div className="mb-4">
+          <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-2">
+            Hazard models
+            {fusion.model?.trained_at && (
+              <span className="normal-case tracking-normal text-gray-600">
+                {' '}· fitted {fusion.model.trained_at} from {Object.values(fusion.model.trials ?? {}).reduce((a, b) => a + b, 0)} recorded trials · tested {fusion.model.evaluation}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(fusion.hazard_states).map(([id, s]) => (
+              <HazardChip key={id} id={id} s={s} info={fusion.model?.hazards?.[id]} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Zone Status Banner ──────────────────────────────────────────────── */}
       <div
@@ -206,7 +295,7 @@ export default function FusionStatus() {
           {fusion.threats.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-28 gap-2">
               <Shield className="w-7 h-7 text-green-500/30" />
-              <p className="text-xs text-gray-600">No active threats</p>
+              <p className="text-xs text-gray-600">{untrained ? 'Model not trained yet' : noData ? 'No live data to assess' : 'No hazard detected'}</p>
             </div>
           ) : (
             <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
@@ -230,7 +319,7 @@ export default function FusionStatus() {
         {/* Sensor Classifications */}
         <div>
           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
-            Sensor Classifications
+            Live Inputs
           </h3>
           <div className="bg-white/3 rounded-xl border border-white/5 px-3 py-1">
             {Object.entries(fusion.sensor_classes).map(([name, sc]) => (
