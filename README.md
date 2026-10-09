@@ -41,6 +41,8 @@ Simulated sensors exist only behind `--mode sim` and are labelled SIMULATED on t
 ├── features.py            # Turns board + camera + audio into one row of measurements per tick
 ├── hazards.py             # The hazards that can be trained, and which measurements each may use
 ├── record_trials.py       # Records a labelled trial from the real hardware → trials/*.csv
+├── trials_from_images.py  # Builds trials from photo folders using the existing camera models
+├── trials_from_audio.py   # Builds trials from .wav clips using YAMNet
 ├── train_fusion.py        # Fits the fusion model from the trials → fusion_model.json
 ├── fusion_engine.py       # Applies the fitted model live → threats, zone status, action
 ├── response_policy.json   # Your team's decision on how serious each detected hazard is
@@ -110,10 +112,26 @@ python record_trials.py --label gas --sensor-ip <board-ip>     # then follow the
 python record_trials.py --label clear --seconds 180            # a calm reference trial
 ```
 
-Labels: `clear`, `gas`, `fire`, `water`, `structural`, `spill`, `distress`, `tilt`. Each hazard
+Labels: `clear`, `gas`, `fire`, `water`, `structural`, `spill`, `distress`, `collapse`, `tilt`. Each hazard
 trial records 60 s calm, then you press Enter when you start the hazard and again when you stop.
 Record at least 3 trials per hazard and 3 clear ones, and vary them (distance, amount, angle,
 background noise). Trials are saved in `trials/`.
+
+**Trials from files (no live camera or quiet room needed).**
+
+```bash
+python trials_from_images.py --damaged <folder of damaged-building photos> --normal <folder of normal photos>
+python trials_from_audio.py --esc50 <path to ESC-50>        # or: --folder distress=<dir> --folder clear=<dir>
+```
+
+`trials_from_images.py` runs each photo through the existing camera models with the same
+settings as `detect.py`, and prints how many damaged photos `rubble.pt` catches and how many
+normal photos it wrongly flags at each confidence setting. `trials_from_audio.py` runs `.wav`
+clips through YAMNet in the same one-second windows as `audio_detect.py`.
+
+The repo already includes audio trials built from the ESC-50 dataset (`trials/audio_*.csv`):
+crying baby → distress, glass breaking → collapse, crackling fire → fire, and a sample of the
+other 47 categories as ordinary sound.
 
 **2. Fit and test.**
 
@@ -124,7 +142,9 @@ python train_fusion.py
 
 This fits one logistic regression per hazard and prints its results on held-out trials: each
 trial is predicted by a model fitted without it. A hazard with fewer than 2 trials, or whose
-model does no better than guessing on held-out trials, is not trained and stays off.
+model does no better than guessing on held-out trials, is not trained and stays off. Add
+`--min-precision 0.8` (or any value you choose) to also leave off models that raise too many
+false alarms on held-out trials.
 
 **3. Run.** `coordinator.py` loads `fusion_model.json` at start and prints what it loaded.
 

@@ -8,7 +8,8 @@
     "FLOOD_RISK":        "WARNING",
     "SPILL_HAZARD":      "WARNING",
     "TILT_HAZARD":       "WARNING",
-    "SURVIVOR_SIGNAL":   "WARNING"
+    "SURVIVOR_SIGNAL":   "WARNING",
+    "COLLAPSE_SOUND":    "WARNING"
   },
 
   "escalate_to_catastrophic": {
@@ -32,6 +33,7 @@
     "SPILL_HAZARD":       "Spill: keep clear, identify the substance",
     "TILT_HAZARD":        "Rover: reposition to stable ground",
     "SURVIVOR_SIGNAL":    "Search: locate the source of the sound",
+    "COLLAPSE_SOUND":     "Structure: possible collapse nearby, approach with care",
     "MASS_CASUALTY_RISK": "Medical: people need extraction"
   }
 }

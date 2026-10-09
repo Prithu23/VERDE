@@ -11,7 +11,7 @@ interface Props {
 const SUB_META: Record<string, { label: string; desc: string; color: string }> = {
   climate: { label: 'Climate',  desc: 'Gas · Fire / heat · Water · Tilt models', color: '#06b6d4' },
   visual:  { label: 'Visual',   desc: 'Structural · Spill models',               color: '#a78bfa' },
-  audio:   { label: 'Audio',    desc: 'Human distress model',                    color: '#f59e0b' },
+  audio:   { label: 'Audio',    desc: 'Distress · Collapse-sound models',                   color: '#f59e0b' },
   anomaly: { label: 'Anomaly',  desc: 'shown below, not part of this score',     color: '#ec4899' },
 };
 
