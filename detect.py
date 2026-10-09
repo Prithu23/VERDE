@@ -22,7 +22,7 @@ import time
 import threading
 import argparse
 from datetime import datetime
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 import cv2
 import numpy as np
@@ -81,7 +81,7 @@ class _MJPEGHandler(BaseHTTPRequestHandler):
         pass
 
 threading.Thread(
-    target=HTTPServer(("0.0.0.0", args.port), _MJPEGHandler).serve_forever,
+    target=ThreadingHTTPServer(("0.0.0.0", args.port), _MJPEGHandler).serve_forever,
     daemon=True,
 ).start()
 
