@@ -52,7 +52,7 @@ from hazards import CLEAR, HAZARDS
 
 C_GRID = [0.01, 0.1, 1.0, 10.0, 100.0]
 MIN_TRIALS = 2
-MIN_AVAILABLE = 0.90         # a measurement must be present in this share of a hazard's active rows
+MIN_AVAILABLE = 0.90         # share of a trial's active rows a measurement must be present in
 
 
 def load_trials(folder: Path) -> list[dict]:
@@ -94,13 +94,21 @@ def train_hazard(key: str, rows: list[dict]) -> tuple[dict | None, str]:
         n = len({r["trial"] for r in rows if r["label"] == key})
         return None, f"{n} trial(s) recorded, need at least {MIN_TRIALS}"
 
-    # Measurements that were actually recorded while this hazard was active.
-    # (Calm rows from before a sensor was ready are simply left out below.)
-    active = [r for r in use if r["label"] == key and r["phase"] == "active"]
+    # A measurement is used if it was recorded during this hazard in at least
+    # MIN_TRIALS trials. Rows that lack a used measurement are then left out:
+    # calm rows from before a sensor was ready, and whole trials made from files
+    # that only cover one source (sound clips have no camera, photos no sound).
+    by_trial = defaultdict(list)
+    for r in use:
+        if r["label"] == key and r["phase"] == "active":
+            by_trial[r["trial"]].append(r)
     feats, dropped = [], []
     for f in spec["features"]:
-        have = sum(1 for r in active if not math.isnan(r[f])) / max(len(active), 1)
-        (feats if have >= MIN_AVAILABLE else dropped).append(f)
+        covered = sum(1 for rs in by_trial.values()
+                      if sum(1 for r in rs if not math.isnan(r[f])) / len(rs) >= MIN_AVAILABLE)
+        (feats if covered >= MIN_TRIALS else dropped).append(f)
+    left_out = sorted({t for t, rs in by_trial.items()
+                       if any(math.isnan(r[f]) for r in rs for f in feats)})
     use = [r for r in use if not any(math.isnan(r[f]) for f in feats)]
     feats = [f for f in feats if len({r[f] for r in use}) > 1]          # constant columns say nothing
     if not feats:
@@ -182,6 +190,7 @@ def train_hazard(key: str, rows: list[dict]) -> tuple[dict | None, str]:
         "C": C,
         "threshold": threshold,
         "not_recorded": dropped,
+        "trials_left_out": left_out,
         "data": {"trials": len(pos_trials), "active_rows": int(y.sum()), "calm_rows": int((1 - y).sum())},
         "held_out": {
             "precision": round(prec, 3), "recall": round(rec, 3), "f1": round(f1, 3),
@@ -199,6 +208,9 @@ def main():
     ap = argparse.ArgumentParser(description="Fit the VERDE fusion model from recorded trials")
     ap.add_argument("--trials", default=str(ROOT / "trials"))
     ap.add_argument("--out", default=str(ROOT / "fusion_model.json"))
+    ap.add_argument("--min-precision", type=float, default=0.0,
+                    help="Leave a hazard switched off if its held-out precision is below this "
+                         "(e.g. 0.8). Default 0: keep every model that beats guessing. Your call.")
     args = ap.parse_args()
 
     try:
@@ -223,6 +235,10 @@ def main():
         model, why = train_hazard(key, rows)
         if model is None:
             skipped[key] = why
+        elif model["held_out"]["precision"] < args.min_precision:
+            h = model["held_out"]
+            skipped[key] = (f"held-out precision {h['precision']:.2f} (recall {h['recall']:.2f}) is below "
+                            f"your --min-precision {args.min_precision}")
         else:
             hazards[key] = model
 
@@ -248,6 +264,9 @@ def main():
               f"  {m['threshold']:<9}  {w}")
         if m["not_recorded"]:
             print(f"  {'':<12}not recorded, so not used: {', '.join(m['not_recorded'])}")
+        if m["trials_left_out"]:
+            print(f"  {'':<12}{len(m['trials_left_out'])} trial(s) left out because they lack "
+                  f"a measurement the others have")
     for key, why in skipped.items():
         print(f"  {key:<12}NOT TRAINED — {why}")
     print(f"\nSaved {args.out}. Restart coordinator.py to load it.\n")

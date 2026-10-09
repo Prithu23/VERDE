@@ -14,7 +14,7 @@ way over its own group:
 
   Climate   gas, fire / heat, water, tilt     (sensor board)
   Visual    structural damage, spill          (camera, plus sound for structural)
-  Audio     human distress                    (microphone)
+  Audio     human distress, collapse sounds   (microphone)
 
 A group with no evaluable hazard (not trained, or its source is offline) is
 shown as offline. With nothing evaluable there is no score. The anomaly
@@ -32,7 +32,7 @@ from sensor_source import TS_FMT, write_json
 GROUPS = {
     "climate": ["gas", "fire", "water", "tilt"],
     "visual":  ["structural", "spill"],
-    "audio":   ["distress"],
+    "audio":   ["distress", "collapse"],
 }
 
 

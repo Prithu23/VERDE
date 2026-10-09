@@ -38,6 +38,11 @@ HAZARDS = {
         "features": ["aud_distress"],
         "how": "play screaming / crying / shouting at the microphone",
     },
+    "collapse": {
+        "id": "COLLAPSE_SOUND", "name": "Collapse / Crash Heard",
+        "features": ["aud_collapse"],
+        "how": "play glass breaking, crashing or collapse sounds at the microphone",
+    },
     "tilt": {
         "id": "TILT_HAZARD", "name": "Unstable Ground",
         "features": ["tilt_deg"],
