@@ -4,28 +4,35 @@ import fs from 'fs'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
-// CALLMEBOT_KEYS=9108307690:123456,9284955662:654321  →  { phone: apikey }
-function parseCallMeBotKeys(raw: string): Record<string, string> {
-  const keys: Record<string, string> = {}
+// TELEGRAM_CHAT_IDS=9108307690:111111111,9284955662:222222222  →  { phone: chatId }
+function parseChatIds(raw: string): Record<string, string> {
+  const chats: Record<string, string> = {}
   for (const pair of raw.split(',')) {
-    const [phone, key] = pair.split(':').map(s => s?.trim())
-    if (phone && key && key !== 'your_api_key_here') keys[phone] = key
+    const [phone, chatId] = pair.split(':').map(s => s?.trim())
+    if (phone && chatId && chatId !== 'your_chat_id_here') chats[phone] = chatId
   }
-  return keys
+  return chats
 }
 
-function roverLocation(): string {
+function roverCoords(): { lat: number; lon: number } | null {
   try {
     const log = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'sensor_log.json'), 'utf-8'))
     const r = Array.isArray(log) ? log[log.length - 1] : log
-    if (r?.gps_valid && r.lat != null && r.lon != null) {
-      return `Loc: ${r.lat.toFixed(5)},${r.lon.toFixed(5)}\nhttps://maps.google.com/?q=${r.lat},${r.lon}`
-    }
+    if (r?.gps_valid && r.lat != null && r.lon != null) return { lat: r.lat, lon: r.lon }
   } catch {}
-  return 'Loc: GPS unavailable'
+  return null
 }
 
-function notifyPlugin(apiKeys: Record<string, string>) {
+async function telegram(token: string, method: string, params: object) {
+  const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  return r.json()
+}
+
+function notifyPlugin(token: string, chatIds: Record<string, string>) {
   return {
     name: 'notify-api',
     configureServer(server: any) {
@@ -38,31 +45,32 @@ function notifyPlugin(apiKeys: Record<string, string>) {
           try {
             const { phone, name, agency, severity, description, status } = JSON.parse(body)
 
-            const apiKey = apiKeys[phone]
-            if (!apiKey) {
+            const chatId = chatIds[phone]
+            if (!token || !chatId) {
               res.statusCode = 500
               res.setHeader('Content-Type', 'application/json')
-              res.end(JSON.stringify({ return: false, message: [`No CallMeBot key for ${phone} in CALLMEBOT_KEYS (.env.local)`] }))
+              res.end(JSON.stringify({ return: false, message: [`No Telegram chat ID for ${phone} (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS in .env.local)`] }))
               return
             }
 
+            const loc = roverCoords()
             const message =
               `AEGIS EMERGENCY ALERT\n` +
               `Agency: ${agency}\n` +
               `Severity: ${severity} | Status: ${status}\n` +
               `${description}\n` +
-              `${roverLocation()}\n` +
+              (loc ? `Loc: ${loc.lat.toFixed(5)},${loc.lon.toFixed(5)}\nhttps://maps.google.com/?q=${loc.lat},${loc.lon}\n` : 'Loc: GPS unavailable\n') +
               `Respond immediately.\n` +
               `-- VERDE Emergency Response System`
 
-            const qs = new URLSearchParams({ phone: `+91${phone}`, text: message, apikey: apiKey })
-            const r = await fetch(`https://api.callmebot.com/whatsapp.php?${qs}`)
-            const text = await r.text()
-            const ok = /queued|sent/i.test(text)
+            const data = await telegram(token, 'sendMessage', { chat_id: chatId, text: message })
+            if (data.ok && loc) {
+              await telegram(token, 'sendLocation', { chat_id: chatId, latitude: loc.lat, longitude: loc.lon })
+            }
             res.setHeader('Content-Type', 'application/json')
             res.end(JSON.stringify({
-              return: ok,
-              message: [ok ? 'WhatsApp queued' : text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)],
+              return: !!data.ok,
+              message: [data.ok ? 'Telegram sent' : `Telegram: ${data.description}`],
               recipient: name,
             }))
           } catch (e) {
@@ -167,7 +175,10 @@ export default defineConfig(({ mode }) => {
     figmaAssetResolver(),
     locationProxy(),
     serveParentData(),
-    notifyPlugin(parseCallMeBotKeys(env.CALLMEBOT_KEYS || '')),
+    notifyPlugin(
+      env.TELEGRAM_BOT_TOKEN === 'your_bot_token_here' ? '' : (env.TELEGRAM_BOT_TOKEN || ''),
+      parseChatIds(env.TELEGRAM_CHAT_IDS || ''),
+    ),
     // The React and Tailwind plugins are both required for Make, even if
     // Tailwind is not being actively used – do not remove them
     react(),

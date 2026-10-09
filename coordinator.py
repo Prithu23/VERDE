@@ -9,7 +9,7 @@ The one process that turns live inputs into the dashboard's data:
                            ├─▶ sensor_log.json   (readings, gas as % rise over clean air)
                            ├─▶ anomaly detector ─▶ anomaly_log.json
                            ├─▶ health score     ─▶ ehs_log.json
-                           └─▶ WhatsApp alerts via CallMeBot (optional)
+                           └─▶ Telegram alerts (optional)
 
 Live by default. If the sensor board, camera or microphone is not delivering
 data, that source is shown as offline; nothing is simulated unless you ask.
@@ -17,7 +17,8 @@ data, that source is shown as offline; nothing is simulated unless you ask.
 Usage:
   python coordinator.py                              # live
   python coordinator.py --sensor-ip 192.168.1.50     # board at another address
-  python coordinator.py --alerts                     # arm WhatsApp alerts on CRITICAL / CATASTROPHIC
+  python coordinator.py --alerts                     # arm Telegram alerts on CRITICAL / CATASTROPHIC
+  python coordinator.py --telegram-setup             # check bot token, list chat IDs
   python coordinator.py --test-sms                   # send one test message and exit
   python coordinator.py --mode sim                   # simulated sensors (labelled SIMULATED)
 
@@ -78,46 +79,99 @@ ALERT_THRESHOLD = 3    # CRITICAL (3) and CATASTROPHIC (4) trigger SMS
 ALERT_COOLDOWN  = 300  # seconds before re-alerting the same contact
 
 
-# ── WhatsApp helpers (CallMeBot) ─────────────────────────────────────────────
-# Each recipient registers once with CallMeBot and gets their own API key.
-# app/.env.local:  CALLMEBOT_KEYS=9108307690:123456,9284955662:654321
+# ── Telegram helpers ─────────────────────────────────────────────────────────
+# One bot for everyone; each contact presses Start on the bot once, then their
+# chat ID is mapped to their phone number in app/.env.local:
+#   TELEGRAM_BOT_TOKEN=123456789:AAH...
+#   TELEGRAM_CHAT_IDS=9108307690:111111111,9284955662:222222222
 
-def _load_api_key() -> dict[str, str]:
-    """Read CALLMEBOT_KEYS from app/.env.local → {phone: apikey}."""
+def _read_env() -> dict[str, str]:
     env = ROOT / 'app' / '.env.local'
     if not env.exists():
         return {}
-    keys = {}
+    out = {}
     for line in env.read_text(encoding='utf-8').splitlines():
-        if line.startswith('CALLMEBOT_KEYS='):
-            for pair in line.split('=', 1)[1].split(','):
-                phone, _, key = pair.strip().partition(':')
-                if phone and key and key != 'your_api_key_here':
-                    keys[phone.strip()] = key.strip()
-    return keys
+        k, sep, v = line.partition('=')
+        if sep:
+            out[k.strip()] = v.strip()
+    return out
 
 
-def _send_sms(api_keys: dict[str, str], phone: str, message: str) -> bool:
-    key = api_keys.get(phone)
-    if not key:
-        print(f'\n  [WA ERR] No CallMeBot key for {phone} in app/.env.local')
-        return False
-    url = 'https://api.callmebot.com/whatsapp.php?' + urllib.parse.urlencode({
-        'phone': f'+91{phone}', 'text': message, 'apikey': key,
-    })
+def _load_api_key() -> dict[str, tuple[str, str]]:
+    """Read Telegram config from app/.env.local → {phone: (bot_token, chat_id)}."""
+    env   = _read_env()
+    token = env.get('TELEGRAM_BOT_TOKEN', '')
+    if not token or token == 'your_bot_token_here':
+        return {}
+    chats = {}
+    for pair in env.get('TELEGRAM_CHAT_IDS', '').split(','):
+        phone, _, chat_id = pair.strip().partition(':')
+        if phone and chat_id and chat_id != 'your_chat_id_here':
+            chats[phone.strip()] = (token, chat_id.strip())
+    return chats
+
+
+def _telegram(token: str, method: str, params: dict) -> dict:
+    req = urllib.request.Request(
+        f'https://api.telegram.org/bot{token}/{method}',
+        data=json.dumps(params).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
     try:
-        with urllib.request.urlopen(url, timeout=15) as r:
-            body = r.read().decode('utf-8', errors='replace')
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
     except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', errors='replace')
+        try:
+            return json.loads(e.read())
+        except Exception:
+            return {'ok': False, 'description': f'HTTP {e.code}'}
     except Exception as e:
-        print(f'\n  [WA ERR] {e}')
+        return {'ok': False, 'description': str(e)}
+
+
+def _send_sms(api_keys: dict[str, tuple[str, str]], phone: str, message: str,
+              reading: dict | None = None) -> bool:
+    """Send a Telegram message (plus a map pin when GPS is valid) to a contact."""
+    if phone not in api_keys:
+        print(f'\n  [TG ERR] No Telegram chat ID for {phone} in TELEGRAM_CHAT_IDS (app/.env.local)')
         return False
-    if 'queued' in body.lower() or 'sent' in body.lower():
-        return True
-    text = ' '.join(re.sub(r'<[^>]+>', ' ', body).split())[:200]
-    print(f'\n  [WA ERR] CallMeBot: {text}')
-    return False
+    token, chat_id = api_keys[phone]
+    data = _telegram(token, 'sendMessage', {'chat_id': chat_id, 'text': message})
+    if not data.get('ok'):
+        print(f'\n  [TG ERR] Telegram: {data.get("description", data)}')
+        return False
+    lat, lon = (reading or {}).get('lat'), (reading or {}).get('lon')
+    if (reading or {}).get('gps_valid') and lat is not None and lon is not None:
+        _telegram(token, 'sendLocation', {'chat_id': chat_id, 'latitude': lat, 'longitude': lon})
+    return True
+
+
+def telegram_setup() -> int:
+    """List chats that have messaged the bot, so their chat IDs can go in .env.local."""
+    token = _read_env().get('TELEGRAM_BOT_TOKEN', '')
+    if not token or token == 'your_bot_token_here':
+        print('  [TG] Put TELEGRAM_BOT_TOKEN in app/.env.local first')
+        return 1
+    me = _telegram(token, 'getMe', {})
+    if not me.get('ok'):
+        print(f'  [TG] Token rejected: {me.get("description")}')
+        return 1
+    print(f'  [TG] Bot: @{me["result"]["username"]}')
+    data = _telegram(token, 'getUpdates', {})
+    chats = {}
+    for u in data.get('result', []):
+        c = (u.get('message') or u.get('my_chat_member') or {}).get('chat')
+        if c:
+            chats[c['id']] = c.get('first_name') or c.get('title') or ''
+            if c.get('username'):
+                chats[c['id']] += f' (@{c["username"]})'
+    if not chats:
+        print(f'  [TG] No chats yet — open t.me/{me["result"]["username"]}, press Start, then rerun this.')
+        return 1
+    for cid, name in chats.items():
+        print(f'  [TG] chat ID {cid}  →  {name}')
+    return 0
 
 
 def _location_text(reading: dict) -> str:
@@ -145,7 +199,7 @@ def send_test_sms() -> int:
     """Send one test SMS to every unique contact number, then exit."""
     api_key = _load_api_key()
     if not api_key:
-        print('  [TEST-SMS] No CALLMEBOT_KEYS in app/.env.local')
+        print('  [TEST-SMS] No TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_IDS in app/.env.local')
         return 1
     try:
         reading = json.loads((ROOT / 'sensor_log.json').read_text(encoding='utf-8'))[-1]
@@ -157,10 +211,10 @@ def send_test_sms() -> int:
         "-- VERDE Emergency Response System"
     )
     numbers = sorted({c['phone'] for c in CONTACTS})
-    print(f'  [TEST-SMS] Sending WhatsApp to {", ".join(numbers)}\n{message}\n')
+    print(f'  [TEST-SMS] Sending Telegram to {", ".join(numbers)}\n{message}\n')
     ok = True
     for phone in numbers:
-        sent = _send_sms(api_key, phone, message)
+        sent = _send_sms(api_key, phone, message, reading)
         print(f'  [TEST-SMS] {phone}  →  {"SENT" if sent else "FAILED"}')
         ok = ok and sent
     return 0 if ok else 1
@@ -171,7 +225,7 @@ def send_test_sms() -> int:
 class AlertManager:
     """Fires SMS when zone escalates into CRITICAL/CATASTROPHIC territory."""
 
-    def __init__(self, api_key: dict[str, str], enabled: bool):
+    def __init__(self, api_key: dict[str, tuple[str, str]], enabled: bool):
         self.api_key    = api_key
         self.enabled    = enabled
         self.live       = enabled and bool(api_key)   # True = real SMS sent
@@ -179,9 +233,9 @@ class AlertManager:
         self.prev_level = 0
 
         if enabled and not api_key:
-            print('  [ALERTS] No CALLMEBOT_KEYS in app/.env.local — running in DRY RUN mode')
+            print('  [ALERTS] No Telegram config in app/.env.local — running in DRY RUN mode')
         elif enabled and api_key:
-            print(f'  [ALERTS] ARMED — WhatsApp keys for {len(api_key)} number(s)  cooldown {ALERT_COOLDOWN}s')
+            print(f'  [ALERTS] ARMED — Telegram chats for {len(api_key)} number(s)  cooldown {ALERT_COOLDOWN}s')
         else:
             print('  [ALERTS] disabled (pass --alerts to arm)')
 
@@ -209,7 +263,7 @@ class AlertManager:
                 continue
 
             if self.live:
-                ok     = _send_sms(self.api_key, phone, _build_sms(fusion, contact, reading))
+                ok     = _send_sms(self.api_key, phone, _build_sms(fusion, contact, reading), reading)
                 status = 'SENT' if ok else 'FAILED'
             else:
                 status = 'DRY-RUN'
@@ -381,10 +435,14 @@ if __name__ == '__main__':
     ap.add_argument('--alerts',    action='store_true',
                     help='Arm auto-SMS when the zone reaches CRITICAL or CATASTROPHIC')
     ap.add_argument('--test-sms',  action='store_true',
-                    help='Send one test WhatsApp message to the contact number(s) and exit')
+                    help='Send one test Telegram message to the contact(s) and exit')
+    ap.add_argument('--telegram-setup', action='store_true',
+                    help='Check the bot token and list chat IDs that have pressed Start, then exit')
     ap.add_argument('--ticks',     type=int, default=0, help=argparse.SUPPRESS)
     args = ap.parse_args()
 
+    if args.telegram_setup:
+        sys.exit(telegram_setup())
     if args.test_sms:
         sys.exit(send_test_sms())
 
