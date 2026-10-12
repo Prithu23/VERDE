@@ -1,320 +1,217 @@
-# VERDE — Environmental Monitoring & Disaster Response Rover
+# VERDE — Disaster Response Rover
 
 **V**isual **E**nvironmental **R**econnaissance and **D**isaster **E**valuation
 
-A rover base-station system that combines computer vision, audio classification and sensor fusion to monitor disaster zones, detect hazards and locate survivors. The operator dashboard is called **AEGIS**.
+A rover that watches, listens and senses a disaster zone, decides what hazards are present,
+and alerts responders. The operator dashboard is called **AEGIS**.
 
 ---
 
-## How it fits together
+## How it works
 
+```mermaid
+flowchart LR
+    board["Sensor board<br/>(ESP32, HTTP /data)"]
+    cam["Camera<br/>(laptop or ESP32-CAM)"]
+    mic["Microphone"]
+
+    detect["detect.py<br/>people · rubble · spills"]
+    audio["audio_detect.py<br/>fire · collapse · distress"]
+    coord["coordinator.py<br/>fusion engine · health score"]
+
+    dash["AEGIS dashboard<br/>localhost:5173"]
+    tg["Telegram alerts"]
+
+    board --> coord
+    cam --> detect --> coord
+    mic --> audio --> coord
+    coord -- JSON logs --> dash
+    detect -- live video --> dash
+    coord -- CRITICAL and above --> tg
 ```
- Sensor board (HTTP) ───────────┐
-                                │
- Camera ──▶ detect.py ──────────┼──▶ coordinator.py
-   (people / rubble / spills)   │       ├─ fusion engine     ──▶ fusion_log.json
-                                │       ├─ sensor log        ──▶ sensor_log.json
- Microphone ──▶ audio_detect.py ┘       ├─ anomaly detector  ──▶ anomaly_log.json
-   (fire / collapse / distress)         ├─ health score      ──▶ ehs_log.json
-                                        └─ Telegram alerts (optional)
 
- app/ (React + Vite dashboard) polls the JSON files and embeds detect.py's video stream
-```
+Everything runs on one laptop. The AI models run locally:
 
-Everything runs on the laptop. The three models (YOLOv8 ×3, YAMNet) run locally; the only
-network calls are the map tiles, the map's location lookup and the optional Telegram alert.
-
-**No made-up values.** Hazard weights and thresholds are fitted from trials recorded on the
-rover (see below). A sensor the board does not report shows as "—", a source that stops
-updating shows as OFFLINE, and with nothing connected the zone status is `NO_DATA`.
-Simulated sensors exist only behind `--mode sim` and are labelled SIMULATED on the dashboard.
+| Model | File | Finds |
+|---|---|---|
+| YOLOv8n | `yolov8n.pt` | People |
+| Damage | `rubble.pt` | Rubble / structural damage (level 1–3) |
+| Spill | `oil.pt` | Oil / chemical spills |
+| YAMNet | `yamnet.tflite` | Sounds (fire, crashes, screaming, sirens…) |
 
 ---
 
-## Repository layout
+## Quick start
 
-```
-.
-├── detect.py              # YOLOv8 people / rubble / spill detection + MJPEG stream
-├── audio_detect.py        # YAMNet audio classification from the laptop mic
-├── sensor_source.py       # Reads the sensor board, camera state and audio state (with freshness checks)
-├── features.py            # Turns board + camera + audio into one row of measurements per tick
-├── hazards.py             # The hazards that can be trained, and which measurements each may use
-├── record_trials.py       # Records a labelled trial from the real hardware → trials/*.csv
-├── trials_from_images.py  # Builds trials from photo folders using the existing camera models
-├── trials_from_audio.py   # Builds trials from .wav clips using YAMNet
-├── train_fusion.py        # Fits the fusion model from the trials → fusion_model.json
-├── fusion_engine.py       # Applies the fitted model live → threats, zone status, action
-├── response_policy.json   # Your team's decision on how serious each detected hazard is
-├── anomaly_detector.py    # Drift, jump, trend and burst detection on learned baselines; also the simulator
-├── ehs_calculator.py      # Environmental Health Score: P(no hazard) from the fitted model
-├── coordinator.py         # Runs fusion + anomaly + EHS in one process, fires SMS alerts
-├── sensor_reader.py       # Older standalone board logger (not needed; the coordinator reads the board)
-├── trail.py               # Scratch script: run rubble.pt on test.png
-│
-├── yolov8n.pt             # People detection (COCO pretrained)
-├── rubble.pt              # Damage detection (level1 / level2 / level3)
-├── oil.pt                 # Spill detection
-├── garbage_model_1.pt     # Not used by any script
-├── yamnet.tflite          # Audio classification
-├── yamnet_classes.csv     # YAMNet class labels
-│
-├── app/                   # AEGIS dashboard (React 18, Vite 6, Tailwind 4, Leaflet, Recharts)
-│   ├── src/app/components # Dashboard panels
-│   ├── src/app/hooks      # Polling hooks for the JSON logs
-│   └── vite.config.ts     # Dev-server middleware: JSON logs, /api/notify, /api/location, /api/address
-│
-├── docs/VERDE_Presentation.html
-├── mission_log.json       # Sample / last detection log
-└── audio_log.json         # Sample audio log
-```
-
----
-
-## Setup
-
-### Python (3.10+)
+**Install** (Python 3.10+, Node 18+)
 
 ```bash
 pip install ultralytics opencv-python numpy tensorflow sounddevice requests
+cd app && npm install
 ```
 
-### Dashboard (Node 18+)
+**Run** — four terminals, all from the repo root:
 
 ```bash
-cd app
-npm install
+python coordinator.py                 # 1. sensors + decisions  (start in clean air)
+python detect.py                      # 2. camera
+python audio_detect.py                # 3. microphone
+cd app && npm run dev                 # 4. dashboard → http://localhost:5173
 ```
 
-To enable Telegram alerts, create a bot with @BotFather and put its token in `app/.env.local`
-(it is git-ignored). Each recipient presses Start on the bot once; `python coordinator.py --telegram-setup`
-then lists their chat IDs, which are mapped to the contacts' phone numbers:
-
-```
-TELEGRAM_BOT_TOKEN=123456789:AAH...
-TELEGRAM_CHAT_IDS=9100000000:111111111,9200000000:222222222
-```
-
-Without these the coordinator runs alerts in dry-run mode. Check the path with
-`python coordinator.py --test-sms`.
+Camera and microphone are optional: anything not running shows as **offline** and the rest
+keeps working.
 
 ---
 
-## Train the fusion model first
+## How a hazard is decided
 
-The fusion engine has no built-in hazard weights or thresholds. Until it is trained on
-recordings from your rover it reports `UNTRAINED` and detects nothing.
+Every second the coordinator reads all inputs and runs this:
 
-**1. Record trials.** With `detect.py` and `audio_detect.py` running, one run per trial:
-
-```bash
-python record_trials.py --label gas --sensor-ip <board-ip>     # then follow the prompts
-python record_trials.py --label clear --seconds 180            # a calm reference trial
+```mermaid
+flowchart TD
+    A["Read board, camera, microphone"] --> B["Turn readings into measurements<br/>(gas rise over clean air, temperature,<br/>people in view, sound scores …)"]
+    B --> C{"Hazard has a<br/>trained model?"}
+    C -- yes --> D["Trained model<br/>fusion_model.json"]
+    C -- no --> E["Fallback rule<br/>fallback_rules.json"]
+    D --> F["Detected hazards"]
+    E --> F
+    F --> G["Zone level from<br/>response_policy.json"]
+    G --> H["CLEAR · ELEVATED · WARNING ·<br/>CRITICAL · CATASTROPHIC"]
+    H --> I["Dashboard"]
+    H -- "CRITICAL or above<br/>(with --alerts)" --> J["Telegram alert + map pin"]
 ```
 
-Labels: `clear`, `gas`, `fire`, `water`, `structural`, `spill`, `distress`, `collapse`, `tilt`. Each hazard
-trial records 60 s calm, then you press Enter when you start the hazard and again when you stop.
-Record at least 3 trials per hazard and 3 clear ones, and vary them (distance, amount, angle,
-background noise). Trials are saved in `trials/`.
+**Gas sensors** are judged by how far they rise above their own clean-air level, which the
+coordinator learns from its first 30 readings. Start it in clean air. Gas readings are ignored
+until the board reports its sensors are warm.
 
-**Trials from files (no live camera or quiet room needed).**
+**Zone escalates to CATASTROPHIC** when a CRITICAL hazard is detected with people in view, or
+two CRITICAL hazards happen together.
 
-```bash
-python trials_from_images.py --damaged <folder of damaged-building photos> --normal <folder of normal photos>
-python trials_from_audio.py --esc50 <path to ESC-50>        # or: --folder distress=<dir> --folder clear=<dir>
+**Environmental Health Score** (0–100) is the chance that no hazard is present.
+
+---
+
+## Settings you can edit
+
+| File | What it controls |
+|---|---|
+| `fallback_rules.json` | Thresholds for hazards with no trained model, e.g. gas alarm at +50% over clean air |
+| `response_policy.json` | How serious each hazard is (WARNING / CRITICAL) and the action text |
+| `sensor_source.py` | Sensor board address (`DEFAULT_SENSOR_IP`), and steady stand-in pressure/gyro values used while those sensors are missing (`STAND_IN`, listed in `simulated_fields`) |
+| `detect.py` | Camera confidence: people 0.50, rubble 0.90, spills 0.80 |
+| `coordinator.py` | Alert contacts and phone numbers |
+| `app/.env.local` | Telegram bot token and chat IDs (git-ignored) |
+
+Current fallback rules:
+
+| Hazard | Detected when |
+|---|---|
+| Gas leak | MQ2 or MQ4 ≥ 50% above clean air |
+| Fire / heat | Temperature ≥ 50 °C, rising ≥ 5 °C/min, or fire sound ≥ 0.5 |
+| Flood / water | Water sensor wet |
+| Structural damage | Rubble in ≥ 50% of camera frames over 10 s |
+| Hazardous spill | Spill in ≥ 50% of camera frames over 10 s |
+| Distress / collapse sound | Sound score ≥ 0.5 |
+| Unstable ground | Tilt ≥ 25° |
+
+A trained model always replaces its rule. Right now only **Human Distress Heard** is trained.
+
+---
+
+## Telegram alerts
+
+```mermaid
+sequenceDiagram
+    participant You
+    participant BotFather
+    participant Bot as Your bot
+    participant C as coordinator.py
+    You->>BotFather: /newbot
+    BotFather-->>You: bot token
+    Note over You: put token in app/.env.local
+    You->>Bot: press Start
+    You->>C: python coordinator.py --telegram-setup
+    C-->>You: your chat ID
+    Note over You: put chat ID in app/.env.local
+    You->>C: python coordinator.py --test-sms
+    C->>Bot: test message
+    Bot-->>You: message + map pin
 ```
 
-`trials_from_images.py` runs each photo through the existing camera models with the same
-settings as `detect.py`, and prints how many damaged photos `rubble.pt` catches and how many
-normal photos it wrongly flags at each confidence setting. `trials_from_audio.py` runs `.wav`
-clips through YAMNet in the same one-second windows as `audio_detect.py`.
+`app/.env.local`:
 
-The repo already includes audio trials built from the ESC-50 dataset (`trials/audio_*.csv`):
-crying baby → distress, glass breaking → collapse, crackling fire → fire, and a sample of the
-other 47 categories as ordinary sound.
+```
+TELEGRAM_BOT_TOKEN=123456789:AAH...
+TELEGRAM_CHAT_IDS=9108307690:111111111
+```
 
-**2. Fit and test.**
+Then run `python coordinator.py --alerts`. Alerts fire when the zone reaches CRITICAL or
+CATASTROPHIC, at most once per contact every 5 minutes. The dashboard's Send buttons use the same bot.
+
+---
+
+## Useful commands
 
 ```bash
+python coordinator.py --sensor-ip 10.34.226.28   # board at another address
+python coordinator.py --mode sim                 # simulated sensors (labelled SIMULATED)
+python detect.py --source esp32 --ip <cam-ip>    # ESP32-CAM instead of the webcam
+python audio_detect.py --list-devices            # pick a microphone, then --device N
+python fusion_engine.py --test                   # engine tests
+```
+
+---
+
+## Training (optional)
+
+Trained models are more reliable than the fallback rules. To train a hazard:
+
+```mermaid
+flowchart LR
+    R["record_trials.py<br/>or trials_from_images.py /<br/>trials_from_audio.py"] --> T["trials/*.csv"]
+    T --> F["train_fusion.py"]
+    F --> M["fusion_model.json"]
+    M --> C["coordinator.py<br/>(loads it at start)"]
+```
+
+```bash
+python record_trials.py --label gas        # with the hardware running; follow the prompts
+python record_trials.py --label clear      # a calm reference trial
 pip install scikit-learn
 python train_fusion.py
 ```
 
-This fits one logistic regression per hazard and prints its results on held-out trials: each
-trial is predicted by a model fitted without it. A hazard with fewer than 2 trials, or whose
-model does no better than guessing on held-out trials, is not trained and stays off. Add
-`--min-precision 0.8` (or any value you choose) to also leave off models that raise too many
-false alarms on held-out trials.
-
-**3. Run.** `coordinator.py` loads `fusion_model.json` at start and prints what it loaded.
-
-Retrain whenever the sensors, the room or the camera set-up change.
+Record at least 3 trials per hazard plus 3 clear ones. Labels: `clear`, `gas`, `fire`, `water`,
+`structural`, `spill`, `distress`, `collapse`, `tilt`.
 
 ---
 
-## Running
+## Project layout
 
-Open four terminals in the repo root.
-
-**1. Coordinator** (start it with the rover in clean air: the gas sensors calibrate on the first 30 readings)
-
-```bash
-python coordinator.py                           # live, board at the default address
-python coordinator.py --sensor-ip 192.168.1.50  # board at another address
-python coordinator.py --alerts                  # arm Telegram alerts on CRITICAL / CATASTROPHIC
-python coordinator.py --mode sim                # simulated sensors, labelled SIMULATED
 ```
-
-**2. Camera**
-
-```bash
-python detect.py                                     # laptop webcam (default)
-python detect.py --source phone --ip 192.168.43.1    # Android "IP Webcam" app
-python detect.py --source esp32 --ip 192.168.0.11    # ESP32-CAM /capture endpoint
-```
-
-**3. Microphone**
-
-```bash
-python audio_detect.py                  # default input device
-python audio_detect.py --list-devices   # then: --device N
-```
-
-**4. Dashboard**
-
-```bash
-cd app
-npm run dev
-```
-
-Then open the URL Vite prints (normally http://localhost:5173).
-
-Any of 2 and 3 can be left out; the coordinator shows that source as offline and works
-with the rest. Do not run `sensor_reader.py` or another script that writes
-`sensor_log.json` at the same time as the coordinator.
-
-**Tests**
-
-```bash
-python fusion_engine.py --test          # engine behaviour tests (untrained, offline, policy)
+coordinator.py        runs everything each second, sends alerts
+sensor_source.py      reads the sensor board, camera and microphone state
+features.py           turns readings into measurements
+fusion_engine.py      trained models + fallback rules → hazards and zone level
+ehs_calculator.py     Environmental Health Score
+anomaly_detector.py   unusual-reading detection (shown on dashboard); simulator
+detect.py             camera models + live video stream (port 8765)
+audio_detect.py       YAMNet sound classification
+app/                  AEGIS dashboard (React + Vite)
 ```
 
 ---
 
-## ML models
+## Known limits
 
-| Model | File | Task | Dataset | mAP50 |
-|-------|------|------|---------|-------|
-| YOLOv8n | `yolov8n.pt` | Human detection | COCO (pretrained) | N/A |
-| Rubble / damage | `rubble.pt` | Disaster damage (level1/2/3) | disasterthesis (1,404 imgs) | 55.1% |
-| Spillage | `oil.pt` | Oil / chemical spill detection | spills-filtered (1,739 imgs) | 96.4% |
-| YAMNet | `yamnet.tflite` | Audio classification | Google AudioSet | pretrained |
-
-**Rubble / damage (`rubble.pt`)** — Precision 43.8%, Recall 72.8%, mAP50-95 54.9%. Per class: level1 35.5%, level2 42.6%, level3 86.7%. Best at severe structural damage.
-
-**Spillage (`oil.pt`)** — Precision 97.0%, Recall 92.9%, mAP50-95 81.9%. Single class.
-
-Detection thresholds in `detect.py`: people 0.50, rubble 0.90, spills 0.30.
-
-**Audio (YAMNet)** — 521 AudioSet classes, of which about 30 are mapped to Human, Fire, Explosion/Collapse, Gas Leak and Siren, each with its own minimum score.
+- The rubble model gives false alarms indoors (it can flag a classroom as damage), so rubble is set to WARNING, not CRITICAL.
+- Gas readings are relative to clean air, not ppm.
+- The camera can't tell survivors from rescuers.
+- Some dashboard panels (Reports page, agency cards) still show fixed sample data.
+- The dashboard's data feeds only work with `npm run dev`, not a production build.
 
 ---
 
-## How the fusion engine decides
-
-| What | Where it comes from |
-|------|---------------------|
-| Measurements | `features.py`: what the board, camera and microphone report |
-| Weight of each measurement, detection threshold | `fusion_model.json`: fitted from your recorded trials |
-| How serious a detected hazard is | `response_policy.json`: your team's decision |
-
-**Measurements.** Per tick: each MQ sensor's rise over its own clean-air level (learned from its
-first 30 readings, so raw analog values from any board work), temperature and its rate of change,
-humidity, pressure change, tilt, shaking, water; people in view and the share of recent camera
-frames showing rubble or a spill; and the highest raw YAMNet score in the last 10 s for fire,
-collapse, gas, siren, distress and speech sounds. A measurement is empty when its source is
-offline.
-
-**Model.** For each trained hazard, `p = sigmoid(intercept + Σ coef × (x − mean) / scale)`. The
-hazard is reported when `p` reaches the threshold that gave the best F1 on held-out trials. The
-dashboard shows each model's live `p`, its threshold and its held-out precision and recall.
-`hazards.py` lists which measurements each hazard may use (a gas leak cannot move the tilt
-sensor); nothing else is set by hand.
-
-**What it will not do.** No model → `UNTRAINED`. Hazard never recorded → never reported. A
-needed source offline → that hazard is "cannot evaluate", not "clear". Nothing live → `NO_DATA`.
-
-**Response policy.** How a detected hazard maps to ELEVATED / WARNING / CRITICAL / CATASTROPHIC,
-and what action text is shown, cannot be measured: it is a decision. It lives in
-`response_policy.json` for your team to edit. People in view matter only when a hazard is
-detected at the same time.
-
-**Environmental Health Score** = `100 × Π(1 − p)` over the hazards the model can evaluate: the
-model's probability that none of them is present.
-
-**Anomaly detector**: learns each sensor's normal level and noise from its own readings, then
-reports drift (CUSUM), jumps (z-score), trends and several sensors rising together. It is shown
-on the dashboard and is not an input to the fusion model or the score. Its sensitivity settings
-are standard statistical defaults, not fitted.
-
-**Alerts**: with `--alerts`, the coordinator sends a Telegram message (plus a map pin of the rover's GPS position when it has a fix) to the contacts routed to the active
-threats when the zone escalates to CRITICAL or CATASTROPHIC, with a 300-second cooldown per contact.
-
----
-
-## Log formats
-
-`mission_log.json` (written by `detect.py` when anything is detected)
-
-```json
-[
-  {
-    "time": "2026-05-10 14:32:05",
-    "lat": null,
-    "lon": null,
-    "people": 1,
-    "damage": [{"type": "level3", "confidence": 0.871}],
-    "spills": [{"type": "spillage", "confidence": 0.945}]
-  }
-]
-```
-
-`detection_state.json` (overwritten every frame)
-
-```json
-{"timestamp": "2026-05-10 14:32:05", "source": "LAPTOP", "people": 1, "rubble": 0, "spills": 0, "fps": 12.4}
-```
-
-`audio_log.json`
-
-```json
-[
-  {"time": "2026-05-08 14:43:00", "category": "Human", "specific": "Speech", "confidence": 0.964, "lat": null, "lon": null}
-]
-```
-
-`sensor_log.json`, `anomaly_log.json`, `fusion_log.json`, `ehs_log.json`, `detection_state.json` and `audio_state.json` are generated at runtime and git-ignored. The coordinator and `audio_detect.py` start their logs empty on each run.
-
----
-
-## Known gaps
-
-- **The model is only as good as the trials.** A few trials in one room give figures for that
-  room. Held-out precision and recall are measured on staged hazards, not real incidents.
-- **Gas readings are relative** to each sensor's clean-air level, not ppm, and the level is
-  learned at start-up: start the coordinator and each trial in clean air.
-- **People are not told apart.** The camera cannot distinguish a survivor from a rescuer.
-- **Camera thresholds** in `detect.py` (people 0.50, rubble 0.90, spills 0.30) are set by hand
-  and decide what the camera reports to the model.
-- **Reports page and some panels are still static**: the Reports page's coordinates and readings,
-  the emergency-agency cards, the threat level badge, alerts history and criticality status.
-- **Dev server only**: the JSON feeds and the `/api/*` endpoints are Vite dev-server middleware.
-- **Hardcoded values**: alert contacts and phone numbers in `coordinator.py` and `App.tsx`.
-- **Windows webcam**: `detect.py` opens the laptop webcam with DirectShow (`cv2.CAP_DSHOW`).
-- **No firmware**: the ESP32 / ESP32-CAM sketches are not in this repo.
-
----
-
-## License
-
-MIT — see `LICENSE`. Third-party attributions are in `ATTRIBUTIONS.md`.
+MIT license — see `LICENSE`. Third-party attributions in `ATTRIBUTIONS.md`.
