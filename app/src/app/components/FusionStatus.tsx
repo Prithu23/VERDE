@@ -57,7 +57,9 @@ function HazardChip({ id, s, info }: { id: string; s: HazardState; info?: ModelI
     s.state === 'unavailable' ? 'text-yellow-300 border-yellow-500/30 bg-yellow-500/5' :
                                 'text-gray-500 border-white/10 bg-white/5';
   const body =
-    s.state === 'detected' || s.state === 'clear'
+    s.method === 'rule' && (s.state === 'detected' || s.state === 'clear')
+      ? `rule: ${s.rule}`
+      : s.state === 'detected' || s.state === 'clear'
       ? `p ${(s.p ?? 0).toFixed(2)} / threshold ${s.threshold}`
       : s.state === 'unavailable' ? `cannot evaluate: ${s.reason}` : `not trained: ${s.reason}`;
   return (

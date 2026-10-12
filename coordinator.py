@@ -376,9 +376,15 @@ def run(zone: str, interval: float, mode: str, sensor_ip: str,
             print(f"             {m['name']:<22} precision {h['precision']:.2f}  recall {h['recall']:.2f}"
                   f"  ({m['data']['trials']} trials)")
         for key, why in (engine.model or {}).get('not_trained', {}).items():
-            print(f"             {key:<22} not trained — {why}")
+            if key not in engine.rules:
+                print(f"             {key:<22} not trained — {why}")
     else:
-        print('  Model    : NONE — no hazard will be reported until you record trials')
+        print('  Model    : none trained yet')
+    ruled = [k for k in engine.rules if k not in trained]
+    if ruled:
+        print(f"  Rules    : fallback_rules.json for {', '.join(ruled)}")
+    if not trained and not ruled:
+        print('             no hazard will be reported until you record trials')
         print('             (record_trials.py) and run train_fusion.py')
     print('  Camera   : from detect.py        (detection_state.json)')
     print('  Audio    : from audio_detect.py  (audio_state.json, audio_log.json)')

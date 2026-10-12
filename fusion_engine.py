@@ -38,11 +38,16 @@ from datetime import datetime
 from pathlib import Path
 
 from features import FeatureExtractor, GAS_SENSORS, SOURCE_OF
+from hazards import HAZARDS
 from sensor_source import TS_FMT
 
 ROOT = Path(__file__).parent
 MODEL_PATH = ROOT / "fusion_model.json"
 POLICY_PATH = ROOT / "response_policy.json"
+RULES_PATH = ROOT / "fallback_rules.json"
+
+_OPS = {'>=': lambda a, b: a >= b, '>': lambda a, b: a > b,
+        '<=': lambda a, b: a <= b, '<': lambda a, b: a < b}
 
 ZONE_STATUS = ['CLEAR', 'ELEVATED', 'WARNING', 'CRITICAL', 'CATASTROPHIC']
 ZONE_RANK = {z: i for i, z in enumerate(ZONE_STATUS)}
@@ -79,10 +84,14 @@ def _fmt(feature: str, value: float) -> str:
 
 class FusionEngine:
 
-    def __init__(self, model: dict | None = None, policy: dict | None = None):
+    def __init__(self, model: dict | None = None, policy: dict | None = None,
+                 rules: dict | None = None):
         self.fx = FeatureExtractor()
         self.model = model if model is not None else load_json(MODEL_PATH)
         self.policy = policy if policy is not None else (load_json(POLICY_PATH) or {})
+        if rules is None:
+            rules = (load_json(RULES_PATH) or {}).get('rules', {})
+        self.rules = {k: r for k, r in rules.items() if k in HAZARDS}
         self.published: dict | None = None
 
     # ── model evaluation ───────────────────────────────────────────────────────
@@ -143,8 +152,40 @@ class FusionEngine:
             log.append(f"{m['name']}: p = {p:.2f} ≥ threshold {m['threshold']} "
                        f"({', '.join(f'{n} {c:+.2f}' for n, c in parts)})")
 
+        # Fallback rules for hazards with no trained model (fallback_rules.json)
+        ruled = {k: r for k, r in self.rules.items() if k not in trained}
+        for key, rule in ruled.items():
+            hz = HAZARDS[key]
+            conds = [c for c in rule.get('any', []) if len(c) == 3 and c[1] in _OPS]
+            avail = [c for c in conds if f.get(c[0]) is not None]
+            if not avail:
+                names = [c[0] for c in conds]
+                why = sorted({SOURCE_NAME[SOURCE_OF[n]] for n in names if not live[SOURCE_OF[n]]})
+                reason = (f"{', '.join(why)} offline" if why
+                          else f"waiting for {', '.join(names)}")
+                states[key] = {'state': 'unavailable', 'name': hz['name'], 'reason': reason,
+                               'method': 'rule'}
+                log.append(f"{hz['name']} (rule): cannot evaluate — {reason}")
+                continue
+            hits = [c for c in avail if _OPS[c[1]](f[c[0]], c[2])]
+            # p is 1/0 for a rule (fired or not) so the health score can use it
+            states[key] = {'state': 'detected' if hits else 'clear', 'name': hz['name'],
+                           'method': 'rule', 'p': 1.0 if hits else 0.0,
+                           'rule': ' or '.join(f"{n} {op} {th}" for n, op, th in conds)}
+            if not hits:
+                continue
+            level = zones.get(hz['id'], 'WARNING')
+            threats.append({
+                'id': hz['id'], 'label': hz['name'], 'severity': SEVERITY_OF_ZONE.get(level, 'MEDIUM'),
+                'zone': level, 'confidence': 1.0, 'contributing': [c[0] for c in hits],
+                'description': '; '.join(_fmt(c[0], f[c[0]]) for c in hits)
+                               + '. Fallback rule (fallback_rules.json), not a trained model.',
+            })
+            log.append(f"{hz['name']} (rule): " + ', '.join(f"{n} {f[n]:.2f} {op} {th}" for n, op, th in hits))
+
         for key, why in (self.model or {}).get('not_trained', {}).items():
-            states[key] = {'state': 'untrained', 'reason': why}
+            if key not in states:
+                states[key] = {'state': 'untrained', 'reason': why}
 
         # People in view while a hazard is detected (count comes from the camera model)
         people = int(f['cam_people'] or 0)
@@ -160,7 +201,7 @@ class FusionEngine:
 
         # ── zone status ────────────────────────────────────────────────────────
         evaluable = [s for s in states.values() if s['state'] in ('clear', 'detected')]
-        if not self.model or not trained:
+        if not trained and not ruled:
             status, level = 'UNTRAINED', 0
             action = ('No Model', 'The fusion model has not been trained. Record trials with '
                                   'record_trials.py, then run train_fusion.py.')
@@ -228,7 +269,9 @@ class FusionEngine:
             'recommended_action': action[0].upper().replace(' ', '_'),
             'action_label':       action[0],
             'action_detail':      action[1],
-            'confidence':         round(len(evaluable) / len(trained), 2) if trained else 0.0,
+            'confidence':         round(len(evaluable) / (len(trained) + len(ruled)), 2)
+                                  if (trained or ruled) else 0.0,
+            'rules':              sorted(ruled),
             'decision_log':       log,
             'processing_time_ms': round((time.monotonic() - t0) * 1000, 2),
         }
@@ -314,8 +357,8 @@ def _run_tests() -> bool:
     calm = lambda i, **kw: {'temperature': 27.0, 'humidity': 60.0, 'pressure': 912.0,
                             'mq2': 410 + i % 3, 'water_detected': False, **kw}
 
-    def play(steps, mdl=model):
-        eng, out = FusionEngine(model=mdl, policy=policy), None
+    def play(steps, mdl=model, rules=None):
+        eng, out = FusionEngine(model=mdl, policy=policy, rules=rules or {}), None
         for i, (r, cam, mic) in enumerate(steps):
             out = eng.decide(r, cam, mic, now=T0 + timedelta(seconds=i))
         return out
@@ -353,6 +396,19 @@ def _run_tests() -> bool:
     check('Nothing connected', play([(None, OFF, OFF)] * 3), 'NO_DATA')
     check('Rubble held in view', play(warm + [(calm(i), CAM(rubble=1), OFF) for i in range(12)]),
           'CRITICAL', has=['STRUCTURAL_STRESS'])
+
+    rules = {'gas':   {'any': [['mq2_rise', '>=', 0.5]]},
+             'water': {'any': [['water', '>=', 1]]},
+             'tilt':  {'any': [['tilt_deg', '>=', 25]]}}
+    check('Rules only, calm', play(warm, mdl={}, rules=rules), 'CLEAR', state=('water', 'clear'))
+    check('Rules only, gas rises', play(leak, mdl={}, rules=rules), 'CRITICAL', has=['GAS_LEAK'])
+    check('Rule for untrained water fires', play(warm + [(calm(i, water_detected=True), CAM(), OFF)
+                                                         for i in range(3)], rules=rules),
+          'WARNING', has=['FLOOD_RISK'])
+    check('Trained model beats its rule', play(warm, rules={'gas': {'any': [['mq2_rise', '>=', -5]]}}),
+          'CLEAR', lacks=['GAS_LEAK'])
+    check('Rule with no sensor (tilt) is unavailable, not clear', play(warm, mdl={}, rules=rules),
+          'CLEAR', state=('tilt', 'unavailable'))
 
     print(f"\n  {sum(results)}/{len(results)} passed\n")
     return all(results)

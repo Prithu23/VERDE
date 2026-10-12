@@ -1,17 +1,1601 @@
 [
   {
-    "time": "2026-05-08 14:43:00",
+    "time": "2026-10-09 15:30:06",
     "category": "Human",
     "specific": "Speech",
-    "confidence": 0.964,
+    "confidence": 0.936,
     "lat": null,
     "lon": null
   },
   {
-    "time": "2026-05-08 14:43:01",
+    "time": "2026-10-09 15:30:17",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.957,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:30:28",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.956,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:30:39",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.967,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:30:56",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.974,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:31:13",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.947,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:31:24",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.981,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:31:35",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.921,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:31:56",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.93,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:32:09",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.98,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:32:20",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.991,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:32:32",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.857,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:32:52",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.96,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:33:05",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.982,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:33:17",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.984,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:33:28",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.968,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:33:40",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.992,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:33:57",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.962,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:34:18",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.99,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:34:33",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.89,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:34:44",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.987,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:34:57",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.961,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:35:09",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.925,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:35:22",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.987,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:35:35",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.896,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:35:47",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.952,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:35:58",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.943,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:36:14",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.991,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:36:27",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.913,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:36:38",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.972,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:36:50",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.989,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:37:01",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.973,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:37:13",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.981,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:37:28",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.956,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:37:39",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.86,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:37:50",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.956,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:38:02",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.922,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:38:13",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.988,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:38:26",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.992,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:38:41",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.947,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:38:53",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.991,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:39:04",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.97,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:39:22",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.861,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:39:35",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.969,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:39:53",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.955,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:40:09",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.854,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:40:20",
     "category": "Human",
     "specific": "Speech",
     "confidence": 0.998,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:40:33",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.963,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:40:44",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.874,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:40:57",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.975,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:41:08",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.899,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:41:21",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.922,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:41:54",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.927,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:42:08",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.942,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:42:25",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.946,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:42:43",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.893,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:42:58",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.962,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:43:11",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.978,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:43:22",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.871,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:43:36",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.934,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:43:51",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.989,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:44:01",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.941,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:44:14",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.934,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:44:25",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.85,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:44:37",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.97,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:44:50",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.928,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:45:13",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.977,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:45:24",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.858,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:45:42",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.97,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:45:55",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.995,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:46:06",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.913,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:46:21",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.887,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:46:32",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.854,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:46:46",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.89,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:46:57",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.989,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:47:08",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.948,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:47:19",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.949,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:47:30",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.975,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:47:41",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.987,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:47:53",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.963,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:48:04",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.989,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:48:15",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.99,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:48:28",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.966,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:48:40",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.973,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:48:51",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.978,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:49:02",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.965,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:49:13",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.996,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:49:26",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.972,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:49:39",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.85,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:49:50",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.972,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:50:04",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.959,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:50:15",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.967,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:50:38",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.999,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:50:49",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.986,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:51:09",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.988,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:51:20",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.995,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:51:33",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.918,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:51:52",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.928,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:52:03",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.918,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:52:17",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.986,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:52:28",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.924,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:52:39",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.975,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:52:56",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.929,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:53:07",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.983,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:53:18",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.908,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:53:29",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.952,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:53:40",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.973,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:53:55",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.952,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:54:06",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.994,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:54:20",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.884,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:54:31",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.933,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:54:44",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.921,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:55:01",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.967,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:55:15",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.961,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:55:26",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.924,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:55:39",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.982,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:55:52",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.995,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:56:09",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.987,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:56:24",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.93,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:56:35",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.881,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:56:46",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.863,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:57:04",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.902,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:57:15",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.882,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:57:34",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.881,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:57:45",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.899,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:58:02",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.914,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:58:16",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.923,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:58:40",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.988,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:58:51",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.868,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:59:02",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.945,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:59:13",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.986,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:59:30",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.864,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 15:59:41",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.979,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:00:02",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.865,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:00:18",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.97,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:00:31",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.924,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:01:05",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.983,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:01:20",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.933,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:01:31",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.959,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:02:02",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.979,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:02:17",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.942,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:02:33",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.946,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:02:46",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.916,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:03:07",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.984,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:03:18",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.899,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:03:29",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.931,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:03:40",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.941,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:03:55",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.938,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:04:14",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.975,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:04:28",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.922,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:04:40",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.934,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:04:56",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.891,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:05:08",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.958,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:05:24",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.933,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:05:43",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.952,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:05:56",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.976,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:06:10",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.874,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:06:27",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.962,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:06:39",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.858,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:06:52",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.851,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:07:04",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.948,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:07:22",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.993,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:07:33",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.853,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:07:44",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.947,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:07:55",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.981,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:08:06",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.96,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:08:19",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.911,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:08:34",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.895,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:08:47",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.918,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:08:59",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.881,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:09:10",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.974,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:09:21",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.901,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:09:32",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.961,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:09:43",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.935,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:10:05",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.991,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:10:16",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.989,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:10:33",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.99,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:10:44",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.972,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:10:57",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.991,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:11:15",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.903,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:11:39",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.961,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:11:50",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.942,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:12:04",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.939,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:12:17",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.997,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:12:30",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.994,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:12:40",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.854,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:13:10",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.98,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:13:20",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.994,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:13:31",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.949,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:13:42",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.965,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:13:52",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.986,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:14:25",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.986,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:14:40",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.937,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:14:52",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.937,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:15:03",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.912,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:15:16",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.973,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:15:29",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.941,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:15:39",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.995,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:15:49",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.971,
+    "lat": null,
+    "lon": null
+  },
+  {
+    "time": "2026-10-09 16:16:02",
+    "category": "Human",
+    "specific": "Speech",
+    "confidence": 0.934,
     "lat": null,
     "lon": null
   }

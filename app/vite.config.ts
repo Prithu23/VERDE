@@ -110,6 +110,26 @@ function locationProxy() {
         }
       })
 
+      // POST /api/gps {lat, lon, accuracy}  →  ../laptop_gps.json (position fallback for sensor_source.py)
+      server.middlewares.use('/api/gps', (req: any, res: any) => {
+        if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
+        let body = ''
+        req.on('data', (chunk: any) => { body += chunk })
+        req.on('end', () => {
+          try {
+            const { lat, lon, accuracy } = JSON.parse(body)
+            if (typeof lat !== 'number' || typeof lon !== 'number') throw new Error('lat/lon required')
+            fs.writeFileSync(path.resolve(__dirname, '..', 'laptop_gps.json'),
+              JSON.stringify({ lat, lon, accuracy: accuracy ?? null, time: Date.now() / 1000 }))
+            res.setHeader('Content-Type', 'application/json')
+            res.end('{"ok":true}')
+          } catch (e) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ ok: false, error: String(e) }))
+          }
+        })
+      })
+
       // /api/address?lat=X&lon=Y  →  Nominatim reverse geocoding (street-level)
       server.middlewares.use('/api/address', async (req: any, res: any) => {
         try {
