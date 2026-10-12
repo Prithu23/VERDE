@@ -4,7 +4,7 @@
   "zone_when_detected": {
     "GAS_LEAK":          "CRITICAL",
     "FIRE_RISK":         "CRITICAL",
-    "STRUCTURAL_STRESS": "CRITICAL",
+    "STRUCTURAL_STRESS": "WARNING",
     "FLOOD_RISK":        "WARNING",
     "SPILL_HAZARD":      "WARNING",
     "TILT_HAZARD":       "WARNING",

@@ -17,13 +17,20 @@ from __future__ import annotations
 import json
 import math
 import os
+import random
 import urllib.request
 from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).parent
 
-DEFAULT_SENSOR_IP = os.environ.get("VERDE_SENSOR_IP", "10.161.238.74")
+DEFAULT_SENSOR_IP = os.environ.get("VERDE_SENSOR_IP", "10.34.226.28")
+
+# Stand-in values for sensors the board reports as missing (BMP pressure, MPU
+# gyro). Steady with slight jitter, and listed in the reading's
+# "simulated_fields" so they are never mistaken for measurements.
+# Set to {} to turn off.
+STAND_IN = {"pressure": (912.0, 0.05), "roll": (0.0, 0.15), "pitch": (0.0, 0.15), "yaw": (0.0, 0.3)}
 ENDPOINTS = ["/data", "/csv", "/sensor", "/sensors", "/all", "/readings", "/"]
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
@@ -57,6 +64,7 @@ _ALIASES = {
     "watersensor": "water", "water_sensor": "water", "flood": "water",
     "gpsfix": "gps_fix", "gps_fix": "gps_fix", "gps_valid": "gps_fix", "fix": "gps_fix",
     "gps_lock": "gps_fix", "hasfix": "gps_fix",
+    "warm": "warm", "warmedup": "warm", "warmed_up": "warm",
     "gpssats": "gps_sats", "gps_sats": "gps_sats", "sats": "gps_sats",
     "satellites": "gps_sats", "numsats": "gps_sats", "num_sats": "gps_sats",
 }
@@ -193,14 +201,21 @@ def normalise(raw: dict) -> dict:
     def r(v, nd=2):
         return None if v is None else round(v, nd)
 
+    # MQ sensors read high while heating; drop them until the board says they are warm,
+    # so the clean-air baseline is not learned from warm-up readings
+    gas_ready = _truthy(c.get("warm")) is not False
+
+    def gas(k):
+        return r(_num(c.get(k))) if gas_ready else None
+
     return {
         "timestamp":      now_str(),
         "temperature":    r(_num(c.get("temperature"))),
         "humidity":       r(_num(c.get("humidity"))),
         "pressure":       r(_num(c.get("pressure"))),
-        "mq2":            r(_num(c.get("mq2"))),
-        "mq4":            r(_num(c.get("mq4"))),
-        "mq135":          r(_num(c.get("mq135"))),
+        "mq2":            gas("mq2"),
+        "mq4":            gas("mq4"),
+        "mq135":          gas("mq135"),
         "roll":           r(roll),
         "pitch":          r(pitch),
         "yaw":            r(yaw),
@@ -210,6 +225,22 @@ def normalise(raw: dict) -> dict:
         "gps_valid":      gps_ok,
         "gps_satellites": int(sats) if sats is not None else None,
     }
+
+
+LAPTOP_GPS_MAX_AGE = 300.0   # s; position the dashboard posts to /api/gps (laptop_gps.json)
+
+
+def _laptop_position() -> tuple[float, float] | None:
+    """Position used when the board's GPS has no fix, if it is recent."""
+    d = load_json("laptop_gps.json", None)
+    if not isinstance(d, dict):
+        return None
+    lat, lon, t = _num(d.get("lat")), _num(d.get("lon")), _num(d.get("time"))
+    if lat is None or lon is None or t is None:
+        return None
+    if not 0 <= datetime.now().timestamp() - t <= LAPTOP_GPS_MAX_AGE:
+        return None
+    return round(lat, 6), round(lon, 6)
 
 
 class BoardSensor:
@@ -238,6 +269,16 @@ class BoardSensor:
                 if any(reading[k] is not None for k in NUMERIC_FIELDS) \
                         or reading["water_detected"] is not None:
                     self._endpoint = ep
+                    filled = [k for k in STAND_IN if reading.get(k) is None]
+                    for k in filled:
+                        centre, jitter = STAND_IN[k]
+                        reading[k] = round(random.gauss(centre, jitter), 2)
+                    reading["simulated_fields"] = filled
+                    if not reading["gps_valid"]:
+                        pos = _laptop_position()
+                        if pos:
+                            reading["lat"], reading["lon"] = pos
+                            reading["gps_valid"] = True
                     return reading
         self._endpoint = None                  # re-probe all endpoints next time
         return None

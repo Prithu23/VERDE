@@ -16,10 +16,10 @@ export default function DashboardView() {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        fetch('http://localhost:8766/gps', {
+        fetch('/api/gps', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ lat: coords.latitude, lon: coords.longitude }),
+          body:    JSON.stringify({ lat: coords.latitude, lon: coords.longitude, accuracy: coords.accuracy }),
         }).catch(() => {});
       },
       () => {},

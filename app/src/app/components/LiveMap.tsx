@@ -141,6 +141,11 @@ export default function LiveMap({ sensor }: Props) {
         setLoading(false);
         setPerm('granted');
         reverseGeocode(c.lat, c.lon);
+        fetch('/api/gps', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ lat: c.lat, lon: c.lon, accuracy: c.accuracy }),
+        }).catch(() => {});
       },
       (err) => {
         if (err.code === 1) setPerm('denied');
@@ -226,7 +231,7 @@ export default function LiveMap({ sensor }: Props) {
           {roverCoords && (
             <div className="flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-medium bg-orange-500/10 border-orange-500/30 text-orange-400">
               <Radio className="w-3 h-3 animate-pulse" />
-              ROVER GPS · {sensor.gps_satellites}sat
+              ROVER GPS{sensor.gps_satellites > 0 ? ` · ${sensor.gps_satellites}sat` : ''}
             </div>
           )}
           <div className={`flex items-center gap-1.5 px-3 py-1 rounded border text-xs font-medium ${badge.cls}`}>
@@ -281,14 +286,20 @@ export default function LiveMap({ sensor }: Props) {
           attributionControl={false}
           scrollWheelZoom={true}
         >
+          {/* Esri dark gray canvas: free, no API key. Tiles go to zoom 16 and are scaled beyond. */}
           <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-            subdomains="abcd"
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+            maxNativeZoom={16}
+            maxZoom={20}
+          />
+          <TileLayer
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+            maxNativeZoom={16}
             maxZoom={20}
           />
 
-          {/* Operator position (browser GPS / IP) */}
-          {coords && (
+          {/* Operator position (browser GPS / IP) — hidden when the rover marker covers it */}
+          {coords && !roverCoords && (
             <>
               <Marker position={[coords.lat, coords.lon]} icon={marker} />
               <Circle
@@ -313,7 +324,7 @@ export default function LiveMap({ sensor }: Props) {
                   <div style={{ fontSize: 11 }}>
                     <b>ROVER</b><br />
                     {roverCoords.lat.toFixed(6)}°, {roverCoords.lon.toFixed(6)}°<br />
-                    Satellites: {sensor.gps_satellites}<br />
+                    {sensor.gps_satellites > 0 && <>Satellites: {sensor.gps_satellites}<br /></>}
                     Tilt R:{sensor.roll.toFixed(1)}° P:{sensor.pitch.toFixed(1)}°
                   </div>
                 </Popup>
@@ -359,8 +370,10 @@ export default function LiveMap({ sensor }: Props) {
               <div className="text-sm font-mono text-orange-300">{roverCoords.lon.toFixed(6)}°</div>
             </div>
             <div className="p-3 rounded-lg bg-orange-500/10 border border-orange-500/30">
-              <div className="text-xs text-orange-400 mb-1">Satellites</div>
-              <div className="text-sm font-mono font-bold text-green-400">{sensor.gps_satellites}</div>
+              <div className="text-xs text-orange-400 mb-1">{sensor.gps_satellites > 0 ? 'Satellites' : 'GPS Fix'}</div>
+              <div className="text-sm font-mono font-bold text-green-400">
+                {sensor.gps_satellites > 0 ? sensor.gps_satellites : 'LIVE'}
+              </div>
             </div>
           </>
         ) : (

@@ -34,6 +34,8 @@ export interface HazardState {
   p?:         number;      // model probability right now
   threshold?: number;      // fitted detection threshold
   reason?:    string;      // why it cannot be evaluated / was not trained
+  method?:    'rule';      // set when a fallback rule (not a trained model) decides it
+  rule?:      string;      // the rule's conditions, e.g. "mq2_rise >= 0.5 or mq4_rise >= 0.5"
 }
 
 /** Held-out results of the trained model, from train_fusion.py. */

@@ -1,0 +1,14 @@
+{
+  "_about": "Fallback detection rules for hazards that have no trained model yet. These are hand-set starting thresholds, not learned: a hazard is reported when ANY of its conditions holds. As soon as train_fusion.py produces a model for a hazard, the model is used instead and its rule is ignored. Feature names and units are listed in features.py (gas *_rise is a fraction: 0.5 = 50% above the sensor's clean-air level).",
+
+  "rules": {
+    "gas":        {"any": [["mq2_rise", ">=", 0.5], ["mq4_rise", ">=", 0.5]]},
+    "fire":       {"any": [["temp", ">=", 50], ["temp_rate", ">=", 5], ["aud_fire", ">=", 0.5]]},
+    "water":      {"any": [["water", ">=", 1]]},
+    "structural": {"any": [["cam_rubble_frac", ">=", 0.5]]},
+    "spill":      {"any": [["cam_spill_frac", ">=", 0.5]]},
+    "distress":   {"any": [["aud_distress", ">=", 0.5]]},
+    "collapse":   {"any": [["aud_collapse", ">=", 0.5]]},
+    "tilt":       {"any": [["tilt_deg", ">=", 25]]}
+  }
+}

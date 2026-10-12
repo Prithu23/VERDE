@@ -1,0 +1,60 @@
+{
+  "trained_at": "2026-10-09 13:13:10",
+  "trials": {
+    "clear": 5,
+    "collapse": 5,
+    "distress": 5,
+    "fire": 5
+  },
+  "rows": 2950,
+  "evaluation": "leave-one-trial-out",
+  "hazards": {
+    "distress": {
+      "id": "SURVIVOR_SIGNAL",
+      "name": "Human Distress Heard",
+      "features": [
+        "aud_distress"
+      ],
+      "mean": [
+        0.1018366440677966
+      ],
+      "scale": [
+        0.2382099741531111
+      ],
+      "coef": [
+        2.1918419610973308
+      ],
+      "intercept": -5.059197901710048,
+      "C": 0.1,
+      "threshold": 0.28,
+      "not_recorded": [],
+      "trials_left_out": [],
+      "data": {
+        "trials": 5,
+        "active_rows": 200,
+        "calm_rows": 2750
+      },
+      "held_out": {
+        "precision": 0.945,
+        "recall": 0.945,
+        "f1": 0.945,
+        "auc": 0.993,
+        "log_loss": 0.0408,
+        "base_rate_log_loss": 0.2479,
+        "false_alarm_rate": 0.004,
+        "trials_detected": "5/5",
+        "trials_with_false_alarm": "1/15",
+        "median_delay_s": 0.0
+      }
+    }
+  },
+  "not_trained": {
+    "gas": "0 trial(s) recorded, need at least 2",
+    "fire": "held-out precision 0.52 (recall 0.66) is below your --min-precision 0.8",
+    "water": "0 trial(s) recorded, need at least 2",
+    "structural": "0 trial(s) recorded, need at least 2",
+    "spill": "0 trial(s) recorded, need at least 2",
+    "collapse": "held-out precision 0.45 (recall 0.68) is below your --min-precision 0.8",
+    "tilt": "0 trial(s) recorded, need at least 2"
+  }
+}

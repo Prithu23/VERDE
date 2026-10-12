@@ -49,3 +49,4 @@ app/.env.local
 
 # Microphone heartbeat (runtime)
 audio_state.json
+laptop_gps.json
