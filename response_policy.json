@@ -1,0 +1,39 @@
+{
+  "_about": "Response policy. This is not measured and not learned: it is your team's decision about how serious each hazard is once the fusion model detects it. Edit freely. Zone levels: ELEVATED, WARNING, CRITICAL, CATASTROPHIC. SMS alerts fire at CRITICAL and above.",
+
+  "zone_when_detected": {
+    "GAS_LEAK":          "CRITICAL",
+    "FIRE_RISK":         "CRITICAL",
+    "STRUCTURAL_STRESS": "WARNING",
+    "FLOOD_RISK":        "WARNING",
+    "SPILL_HAZARD":      "WARNING",
+    "TILT_HAZARD":       "WARNING",
+    "SURVIVOR_SIGNAL":   "WARNING",
+    "COLLAPSE_SOUND":    "WARNING"
+  },
+
+  "escalate_to_catastrophic": {
+    "people_in_view_during_critical_hazard": true,
+    "two_or_more_critical_hazards": true
+  },
+
+  "actions": {
+    "CLEAR":        ["Monitor", "No trained hazard detected. Continue the sweep."],
+    "ELEVATED":     ["Heightened Watch", "Hold position and keep observing."],
+    "WARNING":      ["Prepare Response", "Hazard detected. Alert the response team."],
+    "CRITICAL":     ["Evacuate Personnel", "Serious hazard detected. Keep people out and dispatch responders."],
+    "CATASTROPHIC": ["Immediate Evacuation", "Multiple serious hazards or people in danger. Evacuate and notify all agencies."]
+  },
+
+  "guidance": {
+    "GAS_LEAK":           "Gas: no ignition sources, shut off supply",
+    "FIRE_RISK":          "Fire: send fire crew",
+    "STRUCTURAL_STRESS":  "Structure: do not enter",
+    "FLOOD_RISK":         "Water: isolate electrical supply",
+    "SPILL_HAZARD":       "Spill: keep clear, identify the substance",
+    "TILT_HAZARD":        "Rover: reposition to stable ground",
+    "SURVIVOR_SIGNAL":    "Search: locate the source of the sound",
+    "COLLAPSE_SOUND":     "Structure: possible collapse nearby, approach with care",
+    "MASS_CASUALTY_RISK": "Medical: people need extraction"
+  }
+}
